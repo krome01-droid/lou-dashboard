@@ -1,0 +1,16 @@
+{
+  "framework": "nextjs",
+  "regions": ["cdg1"],
+  "functions": {
+    "src/app/api/ai/chat/route.ts": { "maxDuration": 120 },
+    "src/app/api/ghl/email/route.ts": { "maxDuration": 300 },
+    "src/app/api/cron/*/route.ts": { "maxDuration": 60 },
+    "src/app/api/seo/audit/route.ts": { "maxDuration": 60 }
+  },
+  "crons": [
+    { "path": "/api/cron/veille", "schedule": "0 7 * * 1-5" },
+    { "path": "/api/cron/social-auto", "schedule": "0 9 * * 1,3,5" },
+    { "path": "/api/cron/newsletter", "schedule": "0 8 * * 1" },
+    { "path": "/api/cron/seo-report", "schedule": "0 6 * * 0" }
+  ]
+}

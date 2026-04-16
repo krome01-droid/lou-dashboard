@@ -602,4 +602,153 @@ export const LOU_TOOLS: Anthropic.Tool[] = [
       required: ["prompt"],
     },
   },
+
+  // ─── CMS Webflow ──────────────────────────────────────────────────────────
+  {
+    name: "publish_webflow_item",
+    description:
+      "Crée un item (article/page) dans une collection Webflow via la Content API v2. Convertit le contenu Markdown en rich text Webflow. Peut créer en brouillon ou publier directement. Requiert WF_API_KEY, WF_COLLECTION_ID dans les ENV vars.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        title: { type: "string", description: "Titre de l'item" },
+        slug: { type: "string", description: "Slug URL (ex: mon-article)" },
+        content_markdown: {
+          type: "string",
+          description: "Contenu en Markdown — converti automatiquement en rich text Webflow",
+        },
+        meta_title: {
+          type: "string",
+          description: "Meta title SEO (< 60 caractères)",
+        },
+        meta_description: {
+          type: "string",
+          description: "Meta description SEO (< 155 caractères)",
+        },
+        publish: {
+          type: "boolean",
+          description: "Si true, publie l'item directement (draft par défaut)",
+        },
+        extra_fields: {
+          type: "object",
+          description: "Champs supplémentaires propres à la collection (catégorie, auteur, image…)",
+        },
+      },
+      required: ["title", "slug", "content_markdown"],
+    },
+  },
+  {
+    name: "update_webflow_item",
+    description:
+      "Met à jour un item existant dans une collection Webflow. Permet de modifier le contenu, les métadonnées SEO ou les champs personnalisés d'un item.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        item_id: { type: "string", description: "ID Webflow de l'item à modifier" },
+        collection_id: {
+          type: "string",
+          description: "ID de la collection (optionnel — utilise WF_COLLECTION_ID par défaut)",
+        },
+        title: { type: "string", description: "Nouveau titre (optionnel)" },
+        content_markdown: {
+          type: "string",
+          description: "Nouveau contenu Markdown (optionnel)",
+        },
+        meta_title: { type: "string", description: "Nouveau meta title SEO (optionnel)" },
+        meta_description: { type: "string", description: "Nouvelle meta description SEO (optionnel)" },
+        publish: {
+          type: "boolean",
+          description: "Si true, publie l'item après mise à jour",
+        },
+        extra_fields: {
+          type: "object",
+          description: "Champs supplémentaires à mettre à jour",
+        },
+      },
+      required: ["item_id"],
+    },
+  },
+  {
+    name: "list_webflow_items",
+    description:
+      "Liste les items d'une collection Webflow (articles, pages…). Utile pour trouver l'ID d'un item existant avant de le mettre à jour.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        collection_id: {
+          type: "string",
+          description: "ID de la collection (optionnel — utilise WF_COLLECTION_ID par défaut)",
+        },
+        limit: {
+          type: "number",
+          description: "Nombre d'items à retourner (défaut: 20, max: 100)",
+        },
+        offset: {
+          type: "number",
+          description: "Décalage pour la pagination (défaut: 0)",
+        },
+      },
+      required: [],
+    },
+  },
+
+  // ─── GHL — contact direct ─────────────────────────────────────────────────
+  {
+    name: "ghl_get_contact",
+    description:
+      "Récupère les informations complètes d'un contact GHL par son ID. Utile après ghl_search_contacts pour obtenir tous les détails (custom fields, historique, tags complets).",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        contactId: {
+          type: "string",
+          description: "ID GHL du contact",
+        },
+      },
+      required: ["contactId"],
+    },
+  },
+
+  // ─── Calendrier éditorial — mise à jour / suppression ────────────────────
+  {
+    name: "update_calendar_event",
+    description:
+      "Met à jour un événement du calendrier éditorial (titre, date, statut, notes). Utile pour faire avancer le statut d'un contenu (planned → in_progress → review → published).",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        id: {
+          type: "number",
+          description: "ID de l'événement à modifier",
+        },
+        title: { type: "string", description: "Nouveau titre (optionnel)" },
+        planned_date: {
+          type: "string",
+          description: "Nouvelle date planifiée ISO 8601 (optionnel)",
+        },
+        status: {
+          type: "string",
+          enum: ["idea", "planned", "in_progress", "review", "published", "cancelled"],
+          description: "Nouveau statut (optionnel)",
+        },
+        notes: { type: "string", description: "Nouvelles notes (optionnel)" },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name: "delete_calendar_event",
+    description:
+      "Supprime définitivement un événement du calendrier éditorial. Demander confirmation avant d'appeler cet outil.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        id: {
+          type: "number",
+          description: "ID de l'événement à supprimer",
+        },
+      },
+      required: ["id"],
+    },
+  },
 ]

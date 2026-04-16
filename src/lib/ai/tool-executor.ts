@@ -16,7 +16,9 @@ import {
   listPipelines, getOpportunities, createOpportunity, updateOpportunity,
   listWorkflows, triggerWorkflow,
   listCalendars, getAppointments, createAppointment,
+  getContact,
 } from "@/lib/ghl/crm"
+import { createItem, updateItem, listItems, publishItem, markdownToWebflowRichText } from "@/lib/webflow/client"
 
 type ToolHandler = (input: Record<string, unknown>) => Promise<unknown>
 
@@ -733,6 +735,144 @@ const toolHandlers: Record<string, ToolHandler> = {
       image_url: result.url,
       task_id: result.taskId,
     }
+  },
+
+  // ─── CMS Webflow ──────────────────────────────────────────────────────────
+
+  async publish_webflow_item(input) {
+    const collectionId = process.env.WF_COLLECTION_ID ?? ""
+    if (!collectionId) throw new Error("WF_COLLECTION_ID manquant dans les variables d'environnement")
+
+    const richText = markdownToWebflowRichText(String(input.content_markdown ?? ""))
+    const isDraft = !input.publish
+
+    const fields: Record<string, unknown> = {
+      name: String(input.title),
+      slug: String(input.slug),
+      "post-body": richText,
+    }
+    if (input.meta_title) fields["seo-title"] = String(input.meta_title)
+    if (input.meta_description) fields["seo-description"] = String(input.meta_description)
+    if (input.extra_fields && typeof input.extra_fields === "object") {
+      Object.assign(fields, input.extra_fields)
+    }
+
+    const item = await createItem(collectionId, fields, isDraft)
+
+    if (!isDraft) {
+      await publishItem(collectionId, item.id)
+    }
+
+    return {
+      success: true,
+      itemId: item.id,
+      status: isDraft ? "draft" : "published",
+      note: isDraft
+        ? "Item créé en brouillon dans Webflow. Utiliser update_webflow_item avec publish:true pour publier."
+        : "Item créé et publié sur Webflow.",
+    }
+  },
+
+  async update_webflow_item(input) {
+    const collectionId = input.collection_id
+      ? String(input.collection_id)
+      : (process.env.WF_COLLECTION_ID ?? "")
+    if (!collectionId) throw new Error("WF_COLLECTION_ID manquant dans les variables d'environnement")
+
+    const fields: Record<string, unknown> = {}
+    if (input.title) fields["name"] = String(input.title)
+    if (input.content_markdown) fields["post-body"] = markdownToWebflowRichText(String(input.content_markdown))
+    if (input.meta_title) fields["seo-title"] = String(input.meta_title)
+    if (input.meta_description) fields["seo-description"] = String(input.meta_description)
+    if (input.extra_fields && typeof input.extra_fields === "object") {
+      Object.assign(fields, input.extra_fields)
+    }
+
+    await updateItem(collectionId, String(input.item_id), fields)
+
+    if (input.publish) {
+      await publishItem(collectionId, String(input.item_id))
+    }
+
+    return {
+      success: true,
+      itemId: String(input.item_id),
+      status: input.publish ? "published" : "updated",
+    }
+  },
+
+  async list_webflow_items(input) {
+    const collectionId = input.collection_id
+      ? String(input.collection_id)
+      : (process.env.WF_COLLECTION_ID ?? "")
+    if (!collectionId) throw new Error("WF_COLLECTION_ID manquant dans les variables d'environnement")
+
+    const res = await listItems(collectionId, {
+      limit: input.limit ? Number(input.limit) : 20,
+      offset: input.offset ? Number(input.offset) : 0,
+    })
+
+    return {
+      total: res.pagination.total,
+      items: res.items.map((item) => ({
+        id: item.id,
+        name: item.fieldData["name"] ?? item.fieldData["title"],
+        slug: item.fieldData["slug"],
+        isDraft: item.isDraft,
+        lastPublished: item.lastPublished,
+        lastUpdated: item.lastUpdated,
+      })),
+    }
+  },
+
+  // ─── GHL — contact direct ─────────────────────────────────────────────────
+
+  async ghl_get_contact(input) {
+    const contact = await getContact(String(input.contactId))
+    return {
+      id: contact.id,
+      name: [contact.firstName, contact.lastName].filter(Boolean).join(" "),
+      email: contact.email,
+      phone: contact.phone,
+      company: contact.companyName,
+      address: contact.address1,
+      city: contact.city,
+      country: contact.country,
+      tags: contact.tags ?? [],
+      source: contact.source,
+      customFields: contact.customFields ?? [],
+      dateAdded: contact.dateAdded,
+      dateUpdated: contact.dateUpdated,
+    }
+  },
+
+  // ─── Calendrier éditorial — mise à jour / suppression ────────────────────
+
+  async update_calendar_event(input) {
+    const id = Number(input.id)
+    const updates: string[] = []
+    const params: (string | number)[] = []
+
+    if (input.title) { updates.push("title = ?"); params.push(String(input.title)) }
+    if (input.planned_date) { updates.push("planned_date = ?"); params.push(String(input.planned_date)) }
+    if (input.status) { updates.push("status = ?"); params.push(String(input.status)) }
+    if (input.notes !== undefined) { updates.push("notes = ?"); params.push(String(input.notes)) }
+
+    if (updates.length === 0) return { success: false, error: "Aucun champ à mettre à jour" }
+
+    params.push(id)
+    await execute(
+      `UPDATE wp_lou_editorial_calendar SET ${updates.join(", ")} WHERE id = ?`,
+      params,
+    )
+
+    return { success: true, id }
+  },
+
+  async delete_calendar_event(input) {
+    const id = Number(input.id)
+    await execute("DELETE FROM wp_lou_editorial_calendar WHERE id = ?", [id])
+    return { success: true, id, message: `Événement #${id} supprimé du calendrier éditorial.` }
   },
 }
 

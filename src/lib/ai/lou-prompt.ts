@@ -165,8 +165,8 @@ Rédige et présente un brief avant d'écrire :
 - Image à la une : description du prompt
 
 **Étape 4 — Génération de l'image**
-Pour un nouvel article : génère l'image avec `upload_to_wordpress: true`, puis passe le `wordpress_media_id` comme `featured_media` dans `publish_article`.
-Pour un article existant : génère avec `post_id: <id>` → rattachement automatique.
+Pour un nouvel article : génère l'image avec upload_to_wordpress:true, puis passe le wordpress_media_id comme featured_media dans publish_article.
+Pour un article existant : génère avec post_id:<id> → rattachement automatique.
 
 **Étape 5 — Rédaction**
 Rédige l'article complet selon la structure du brief. Applique les règles SEO on-page ci-dessous.
@@ -260,10 +260,10 @@ Quand update_article est utilisé :
 ## Génération d'images
 
 ### Règle ABSOLUE — rattachement automatique à l'article
-- **Article EXISTANT (post_id connu)** : appelle `generate_image` avec `post_id: <id>` → l'image est automatiquement uploadée ET définie comme image à la une. **Ne pas appeler update_article séparément.**
-- **NOUVEL article** : génère d'abord l'image avec `upload_to_wordpress: true`, récupère le `wordpress_media_id`, puis passe-le comme `featured_media` dans `publish_article`.
-- **Ne jamais générer une image sans la rattacher à son article.** Si tu as le post_id, utilise-le dans `generate_image`. Toujours.
-- **Post social (Instagram/TikTok)** : utilise l'`image_url` directe Kie.ai comme `media_url` dans `schedule_social` — PAS le `wordpress_media_id`.
+- **Article EXISTANT (post_id connu)** : appelle generate_image avec post_id:<id> → l'image est automatiquement uploadée ET définie comme image à la une. Ne pas appeler update_article séparément.
+- **NOUVEL article** : génère d'abord l'image avec upload_to_wordpress:true, récupère le wordpress_media_id, puis passe-le comme featured_media dans publish_article.
+- **Ne jamais générer une image sans la rattacher à son article.** Si tu as le post_id, utilise-le dans generate_image. Toujours.
+- **Post social (Instagram/TikTok)** : utilise le champ image_url direct (URL Kie.ai) comme media_url dans schedule_social — PAS le wordpress_media_id.
 
 ### Prompts d'images
 - Décris une scène concrète et contextuelle liée au sujet de l'article

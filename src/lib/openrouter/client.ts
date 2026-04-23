@@ -54,12 +54,12 @@ async function createTask(prompt: string): Promise<string> {
     },
     body: JSON.stringify({
       prompt,
-      size: "3:2",
+      size: "16:9",
       isEnhance: false,
       enableFallback: true,
       fallbackModel: "FLUX_MAX",
     }),
-    signal: AbortSignal.timeout(15000),
+    signal: AbortSignal.timeout(20000),
   })
 
   if (!res.ok) {
@@ -80,15 +80,16 @@ async function createTask(prompt: string): Promise<string> {
 
 /**
  * Poll task status until complete or timeout.
+ * GPT-4o image generation can take 60-120s on Kie.ai.
  */
-async function pollTask(taskId: string, timeoutMs = 45000): Promise<string[]> {
+async function pollTask(taskId: string, timeoutMs = 110000): Promise<string[]> {
   const apiKey = getApiKey()
   const deadline = Date.now() + timeoutMs
   let poll = 0
 
   while (Date.now() < deadline) {
-    // First 3 polls: 2s interval; then 4s to reduce pressure
-    await sleep(poll < 3 ? 2000 : 4000)
+    // First 3 polls: 3s interval; then 5s to reduce API pressure
+    await sleep(poll < 3 ? 3000 : 5000)
     poll++
 
     try {

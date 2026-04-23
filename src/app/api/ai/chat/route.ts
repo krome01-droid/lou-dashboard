@@ -3,6 +3,9 @@ import { authOptions } from "@/lib/auth/options"
 import { streamChatWithTools } from "@/lib/ai/anthropic-client"
 import { z } from "zod"
 
+// Allow up to 5 minutes — needed for Kie.ai image generation (GPT-4o takes 60-120s)
+export const maxDuration = 300
+
 const attachmentSchema = z.object({
   filename: z.string(),
   mimeType: z.string(),

@@ -588,7 +588,7 @@ export const LOU_TOOLS: Anthropic.Tool[] = [
   {
     name: "generate_image",
     description:
-      "Génère une image photo-réaliste via IA (nanobanana). Utilise un style éditorial professionnel adapté aux auto-écoles françaises. L'image peut servir d'image à la une d'un article WordPress ou d'illustration pour un post social. Retourne l'URL de l'image générée et optionnellement l'upload sur WordPress.",
+      "Génère une image photo-réaliste via IA et l'attache automatiquement à un article WordPress comme image à la une. Fournir post_id pour rattacher directement l'image à l'article — c'est l'usage OBLIGATOIRE quand on génère une image pour un article existant.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -597,10 +597,15 @@ export const LOU_TOOLS: Anthropic.Tool[] = [
           description:
             "Description de la scène à générer (ex: 'Jeune femme souriante au volant d'une voiture d'auto-école dans une rue de Paris'). Le style photo-réaliste et les paramètres techniques sont ajoutés automatiquement.",
         },
+        post_id: {
+          type: "number",
+          description:
+            "ID WordPress de l'article auquel rattacher l'image comme image à la une (featured_media). Si fourni, l'image est automatiquement uploadée ET définie comme image à la une — pas besoin d'appeler update_article séparément.",
+        },
         upload_to_wordpress: {
           type: "boolean",
           description:
-            "Si true, l'image est uploadée sur WordPress et retourne le media_id utilisable comme featured_media. Défaut: false.",
+            "Si true (ou si post_id est fourni), l'image est uploadée sur WordPress. Automatiquement true quand post_id est présent.",
         },
         filename: {
           type: "string",

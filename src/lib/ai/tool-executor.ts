@@ -732,27 +732,56 @@ const toolHandlers: Record<string, ToolHandler> = {
   async generate_image(input) {
     const result = await generateImage(String(input.prompt))
 
-    if (input.upload_to_wordpress) {
+    const postId = input.post_id ? Number(input.post_id) : null
+    const shouldUpload = input.upload_to_wordpress || postId !== null
+
+    if (shouldUpload) {
       const slug = input.filename
         ? String(input.filename).replace(/\.[^.]+$/, "")
         : "lou-image-" + Date.now()
       const filename = input.filename ? String(input.filename) : `${slug}.jpg`
 
       const mediaId = await uploadMedia(result.url, filename)
-      if (mediaId) {
+      if (!mediaId) {
         return {
           success: true,
           image_url: result.url,
-          wordpress_media_id: mediaId,
-          filename,
-          note: `Image uploadée sur WordPress (media_id: ${mediaId}). Utilisable comme featured_media dans publish_article.`,
+          wordpress_upload_failed: true,
+          note: "Image générée mais l'upload WordPress a échoué. L'URL de l'image reste disponible.",
         }
       }
+
+      // Si post_id fourni → rattacher automatiquement comme featured image
+      if (postId) {
+        try {
+          await updatePost(postId, { featured_media: mediaId })
+          return {
+            success: true,
+            image_url: result.url,
+            wordpress_media_id: mediaId,
+            filename,
+            featured_image_set: true,
+            post_id: postId,
+            note: `✅ Image uploadée (media_id: ${mediaId}) et définie comme image à la une de l'article ${postId}.`,
+          }
+        } catch {
+          return {
+            success: true,
+            image_url: result.url,
+            wordpress_media_id: mediaId,
+            filename,
+            featured_image_set: false,
+            note: `Image uploadée (media_id: ${mediaId}) mais le rattachement à l'article ${postId} a échoué. Utilise update_article avec featured_media: ${mediaId}.`,
+          }
+        }
+      }
+
       return {
         success: true,
         image_url: result.url,
-        wordpress_upload_failed: true,
-        note: "Image générée mais l'upload WordPress a échoué. L'URL de l'image reste disponible.",
+        wordpress_media_id: mediaId,
+        filename,
+        note: `Image uploadée sur WordPress (media_id: ${mediaId}). Pour la définir comme image à la une : update_article(post_id, featured_media: ${mediaId}).`,
       }
     }
 

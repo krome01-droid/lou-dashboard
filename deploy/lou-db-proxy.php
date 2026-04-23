@@ -1,122 +1,58 @@
 <?php
 /**
- * LOU Dashboard — MySQL Proxy pour Vercel
+ * LOU Dashboard — MySQL Proxy via WP REST API
  *
  * Ce fichier se place dans wp-content/mu-plugins/ sur o2switch.
- * Il permet au dashboard LOU (Vercel) d'executer des requetes MySQL
- * sur la base WordPress, securise par un token secret.
+ * Il enregistre un endpoint WP REST API sécurisé accessible via :
+ *   POST https://autoecolemagazine.fr/wp-json/lou/v1/db
  *
- * Endpoint: POST https://autoecolemagazine.fr/wp-content/mu-plugins/lou-db-proxy.php
+ * Auth : header  X-Lou-Secret: <token>
  */
 
-// Bloquer l'accès direct sans token
-header('Content-Type: application/json; charset=utf-8');
+if (!defined('ABSPATH')) exit;
 
-// CORS pour Vercel
-$origin = $_SERVER['HTTP_ORIGIN'] ?? '';
-$allowed = ['https://com.autoecolemagazine.fr', 'https://ae.autoecolemagazine.fr', 'http://localhost:3000'];
-if (in_array($origin, $allowed)) {
-    header("Access-Control-Allow-Origin: $origin");
-    header('Access-Control-Allow-Methods: POST, OPTIONS');
-    header('Access-Control-Allow-Headers: Content-Type, Authorization');
-}
+add_action('rest_api_init', function () {
+    register_rest_route('lou/v1', '/db', [
+        'methods'             => ['POST', 'OPTIONS'],
+        'callback'            => 'lou_db_proxy_handler',
+        'permission_callback' => '__return_true', // Auth gérée dans le callback
+    ]);
+});
 
-if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
-    http_response_code(204);
-    exit;
-}
+function lou_db_proxy_handler(WP_REST_Request $request): WP_REST_Response|WP_Error {
+    $expected_secret = '48ff093220fd94b5bc2603ac517f2c29fe1e3aaccd275d44';
+    $provided_secret = $request->get_header('X-Lou-Secret');
 
-if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    http_response_code(405);
-    echo json_encode(['error' => 'Method not allowed']);
-    exit;
-}
+    if ($provided_secret !== $expected_secret) {
+        return new WP_Error('unauthorized', 'Unauthorized', ['status' => 401]);
+    }
 
-// Verifier le token secret
-$auth = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
-$expected_token = '48ff093220fd94b5bc2603ac517f2c29fe1e3aaccd275d44';
+    global $wpdb;
 
-if ($auth !== "Bearer $expected_token") {
-    http_response_code(401);
-    echo json_encode(['error' => 'Unauthorized']);
-    exit;
-}
+    $input = $request->get_json_params();
+    if (!$input || !isset($input['action'])) {
+        return new WP_Error('bad_request', 'Missing action', ['status' => 400]);
+    }
 
-// Lire le corps de la requete
-$input = json_decode(file_get_contents('php://input'), true);
+    $action = $input['action'];
 
-if (!$input || !isset($input['action'])) {
-    http_response_code(400);
-    echo json_encode(['error' => 'Missing action']);
-    exit;
-}
-
-// Charger WordPress pour $wpdb
-$wp_load = dirname(__FILE__) . '/../../wp-load.php';
-if (!file_exists($wp_load)) {
-    $wp_load = dirname(__FILE__) . '/../../../wp-load.php';
-}
-if (file_exists($wp_load)) {
-    require_once $wp_load;
-} else {
-    http_response_code(500);
-    echo json_encode(['error' => 'wp-load.php not found']);
-    exit;
-}
-
-global $wpdb;
-
-$action = $input['action'];
-
-try {
     switch ($action) {
-        case 'query':
-            // SELECT queries
-            $sql = $input['sql'] ?? '';
-            $params = $input['params'] ?? [];
 
-            // Security: only allow SELECT, INSERT, UPDATE, CREATE TABLE
-            $allowed_prefixes = ['SELECT', 'INSERT', 'UPDATE', 'CREATE TABLE IF NOT EXISTS', 'SHOW TABLES'];
-            $sql_upper = strtoupper(trim($sql));
-            $allowed = false;
-            foreach ($allowed_prefixes as $prefix) {
-                if (strpos($sql_upper, $prefix) === 0) {
-                    $allowed = true;
-                    break;
-                }
-            }
+        // ------------------------------------------------------------------
+        case 'ping':
+            return rest_ensure_response([
+                'success' => true,
+                'message' => 'pong',
+                'prefix'  => $wpdb->prefix,
+            ]);
 
-            if (!$allowed) {
-                http_response_code(403);
-                echo json_encode(['error' => 'Query type not allowed']);
-                exit;
-            }
-
-            if (!empty($params)) {
-                $prepared = $wpdb->prepare($sql, $params);
-            } else {
-                $prepared = $sql;
-            }
-
-            if (strpos($sql_upper, 'SELECT') === 0 || strpos($sql_upper, 'SHOW') === 0) {
-                $results = $wpdb->get_results($prepared, ARRAY_A);
-                echo json_encode(['success' => true, 'rows' => $results]);
-            } else {
-                $wpdb->query($prepared);
-                echo json_encode([
-                    'success' => true,
-                    'affected_rows' => $wpdb->rows_affected,
-                    'insert_id' => $wpdb->insert_id,
-                ]);
-            }
-            break;
-
+        // ------------------------------------------------------------------
         case 'migrate':
-            // Run LOU table migrations
             $tables_created = [];
+            $prefix = $wpdb->prefix;
 
             $sqls = [
-                "CREATE TABLE IF NOT EXISTS {$wpdb->prefix}lou_content_log (
+                "CREATE TABLE IF NOT EXISTS {$prefix}lou_content_log (
                     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
                     title VARCHAR(500) NOT NULL,
                     type ENUM('article','social','newsletter','email') DEFAULT 'article',
@@ -134,7 +70,7 @@ try {
                     KEY idx_created_at (created_at)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
 
-                "CREATE TABLE IF NOT EXISTS {$wpdb->prefix}lou_social_posts (
+                "CREATE TABLE IF NOT EXISTS {$prefix}lou_social_posts (
                     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
                     content_log_id BIGINT UNSIGNED DEFAULT NULL,
                     platform ENUM('facebook','instagram','linkedin','google_business') NOT NULL,
@@ -151,7 +87,7 @@ try {
                     KEY idx_scheduled_at (scheduled_at)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
 
-                "CREATE TABLE IF NOT EXISTS {$wpdb->prefix}lou_seo_reports (
+                "CREATE TABLE IF NOT EXISTS {$prefix}lou_seo_reports (
                     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
                     report_type ENUM('weekly','monthly','audit','geo') DEFAULT 'weekly',
                     period_start DATE DEFAULT NULL,
@@ -163,7 +99,7 @@ try {
                     KEY idx_period (period_start, period_end)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
 
-                "CREATE TABLE IF NOT EXISTS {$wpdb->prefix}lou_editorial_calendar (
+                "CREATE TABLE IF NOT EXISTS {$prefix}lou_editorial_calendar (
                     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
                     title VARCHAR(500) NOT NULL,
                     content_type ENUM('article','newsletter','social_campaign','email_sequence') DEFAULT 'article',
@@ -180,7 +116,7 @@ try {
                     KEY idx_content_type (content_type)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
 
-                "CREATE TABLE IF NOT EXISTS {$wpdb->prefix}lou_conversations (
+                "CREATE TABLE IF NOT EXISTS {$prefix}lou_conversations (
                     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
                     title VARCHAR(255) DEFAULT NULL,
                     messages_json LONGTEXT NOT NULL,
@@ -193,7 +129,6 @@ try {
             foreach ($sqls as $sql) {
                 preg_match('/CREATE TABLE IF NOT EXISTS (\S+)/', $sql, $matches);
                 $table_name = $matches[1] ?? 'unknown';
-
                 $result = $wpdb->query($sql);
                 if ($result === false) {
                     $tables_created[] = "ERREUR: $table_name — " . $wpdb->last_error;
@@ -202,18 +137,63 @@ try {
                 }
             }
 
-            echo json_encode(['success' => true, 'results' => $tables_created]);
-            break;
+            return rest_ensure_response(['success' => true, 'results' => $tables_created]);
 
-        case 'ping':
-            echo json_encode(['success' => true, 'message' => 'pong', 'prefix' => $wpdb->prefix]);
-            break;
+        // ------------------------------------------------------------------
+        case 'query':
+            $sql    = $input['sql']    ?? '';
+            $params = $input['params'] ?? [];
 
+            // Whitelist des types de requêtes autorisés
+            $allowed_prefixes = [
+                'SELECT',
+                'INSERT',
+                'UPDATE',
+                'DELETE',
+                'CREATE TABLE IF NOT EXISTS',
+                'SHOW TABLES',
+            ];
+
+            $sql_upper = strtoupper(trim($sql));
+            $allowed   = false;
+
+            foreach ($allowed_prefixes as $prefix) {
+                if (strpos($sql_upper, $prefix) === 0) {
+                    $allowed = true;
+                    break;
+                }
+            }
+
+            if (!$allowed) {
+                return new WP_Error('forbidden', 'Query type not allowed', ['status' => 403]);
+            }
+
+            $prepared = !empty($params)
+                ? $wpdb->prepare($sql, $params)
+                : $sql;
+
+            if (strpos($sql_upper, 'SELECT') === 0 || strpos($sql_upper, 'SHOW') === 0) {
+                $rows = $wpdb->get_results($prepared, ARRAY_A);
+                if ($wpdb->last_error) {
+                    return new WP_Error('db_error', $wpdb->last_error, ['status' => 500]);
+                }
+                return rest_ensure_response(['success' => true, 'rows' => $rows ?? []]);
+            }
+
+            $wpdb->query($prepared);
+
+            if ($wpdb->last_error) {
+                return new WP_Error('db_error', $wpdb->last_error, ['status' => 500]);
+            }
+
+            return rest_ensure_response([
+                'success'       => true,
+                'affected_rows' => $wpdb->rows_affected,
+                'insert_id'     => $wpdb->insert_id,
+            ]);
+
+        // ------------------------------------------------------------------
         default:
-            http_response_code(400);
-            echo json_encode(['error' => "Unknown action: $action"]);
+            return new WP_Error('bad_request', "Unknown action: $action", ['status' => 400]);
     }
-} catch (Exception $e) {
-    http_response_code(500);
-    echo json_encode(['error' => $e->getMessage()]);
 }

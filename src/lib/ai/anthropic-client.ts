@@ -6,7 +6,7 @@ import type { StreamEvent, FileAttachment } from "./types"
 
 const MODEL = "claude-sonnet-4-6"
 const MAX_TOKENS = 8192
-const MAX_TOOL_ROUNDS = 5
+const MAX_TOOL_ROUNDS = 10
 
 interface ChatMessage {
   role: "user" | "assistant"
@@ -72,9 +72,9 @@ function buildContentBlocks(
  * Returns a ReadableStream of NDJSON StreamEvent objects.
  *
  * The agentic loop:
- * 1. Send messages to Claude with tools
- * 2. Stream text deltas to the client
- * 3. If Claude calls a tool, execute it server-side
+ * 1. Stream messages from Claude token-by-token using messages.stream()
+ * 2. Forward text deltas to the client in real-time
+ * 3. If Claude calls a tool, execute it server-side after streaming completes
  * 4. Send tool_result back to Claude
  * 5. Continue streaming (up to MAX_TOOL_ROUNDS)
  */
@@ -105,7 +105,8 @@ export function streamChatWithTools(
         })
 
         for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-          const response = await client.messages.create({
+          // Use stream() so text deltas reach the client token-by-token
+          const messageStream = client.messages.stream({
             model: MODEL,
             max_tokens: MAX_TOKENS,
             system: LOU_SYSTEM_PROMPT,
@@ -113,33 +114,43 @@ export function streamChatWithTools(
             tools: LOU_TOOLS,
           })
 
-          // Process content blocks, execute tools once and store results
-          const toolUseBlocks: Anthropic.ToolUseBlock[] = []
+          // Forward text deltas in real-time as they arrive from Anthropic
+          for await (const event of messageStream) {
+            if (
+              event.type === "content_block_delta" &&
+              event.delta.type === "text_delta"
+            ) {
+              send(controller, { type: "text_delta", content: event.delta.text })
+            }
+          }
+
+          // Collect the final assembled message (tool inputs are now complete)
+          const response = await messageStream.finalMessage()
+
+          // Process tool use blocks, execute tools once and store results
+          const toolUseBlocks = response.content.filter(
+            (b): b is Anthropic.ToolUseBlock => b.type === "tool_use",
+          )
           const toolResultsMap = new Map<string, { result: unknown; status: string }>()
 
-          for (const block of response.content) {
-            if (block.type === "text") {
-              send(controller, { type: "text_delta", content: block.text })
-            } else if (block.type === "tool_use") {
-              toolUseBlocks.push(block)
-              const toolInput = block.input as Record<string, unknown>
+          for (const block of toolUseBlocks) {
+            const toolInput = block.input as Record<string, unknown>
 
-              send(controller, {
-                type: "tool_use_start",
-                toolName: block.name,
-                toolInput,
-              })
+            send(controller, {
+              type: "tool_use_start",
+              toolName: block.name,
+              toolInput,
+            })
 
-              const result = await executeTool(block.name, toolInput)
-              toolResultsMap.set(block.id, result)
+            const result = await executeTool(block.name, toolInput)
+            toolResultsMap.set(block.id, result)
 
-              send(controller, {
-                type: "tool_result",
-                toolName: block.name,
-                result: result.result,
-                status: result.status,
-              })
-            }
+            send(controller, {
+              type: "tool_result",
+              toolName: block.name,
+              result: result.result,
+              status: result.status,
+            })
           }
 
           // If no tool calls, we're done

@@ -6,7 +6,7 @@ import { ChatMessages } from "@/components/chat/chat-messages"
 import { ChatInput } from "@/components/chat/chat-input"
 import { useAiChat } from "@/hooks/use-ai-chat"
 import { Button } from "@/components/ui/button"
-import { Plus, MessageSquare, Trash2, Download, ClipboardCopy } from "lucide-react"
+import { Plus, MessageSquare, Trash2, Download, ClipboardCopy, AlertTriangle } from "lucide-react"
 
 interface ConversationSummary {
   id: number
@@ -19,6 +19,8 @@ export default function ChatPage() {
     messages,
     isStreaming,
     conversationId,
+    lastSavedAt,
+    saveError,
     sendMessage,
     stopStreaming,
     loadConversation,
@@ -43,13 +45,12 @@ export default function ChatPage() {
     fetchConversations()
   }, [fetchConversations])
 
-  // Refresh list after each conversation save
+  // Refresh list only after a save is confirmed (no race condition)
   useEffect(() => {
-    if (!isStreaming && messages.length > 0) {
-      const timer = setTimeout(fetchConversations, 500)
-      return () => clearTimeout(timer)
+    if (lastSavedAt > 0) {
+      fetchConversations()
     }
-  }, [isStreaming, messages.length, fetchConversations])
+  }, [lastSavedAt, fetchConversations])
 
   function exportAsMarkdown() {
     if (messages.length === 0) return
@@ -93,6 +94,12 @@ export default function ChatPage() {
 
   return (
     <>
+      {saveError && (
+        <div className="flex items-center gap-2 bg-yellow-50 border-b border-yellow-200 px-4 py-2 text-xs text-yellow-800">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+          <span>Sauvegarde DB échouée — {saveError}. Va dans <strong>Paramètres → Base de données → Exécuter la migration</strong>.</span>
+        </div>
+      )}
       <Header title="Chat LOU">
         <div className="flex items-center gap-2">
           <Button

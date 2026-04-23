@@ -109,6 +109,15 @@ export const LOU_TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: "get_site_content_audit",
+    description:
+      "Récupère l'intégralité du contenu du site WordPress en un seul appel : tous les articles avec pagination automatique, stats par catégorie, articles anciens à rafraîchir (> 18 mois), articles récents (< 30 jours). À utiliser quand l'utilisateur demande une analyse complète du site ou un audit de contenu. Remplace les appels multiples à search_wp_posts.",
+    input_schema: {
+      type: "object" as const,
+      properties: {},
+    },
+  },
+  {
     name: "search_wp_posts",
     description:
       "Recherche des articles existants sur WordPress par mot-clé ou catégorie.",

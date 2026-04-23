@@ -19,6 +19,25 @@ async function wpFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
   return res.json()
 }
 
+async function wpFetchWithHeaders<T>(
+  path: string,
+): Promise<{ data: T; totalPages: number; totalItems: number }> {
+  const res = await fetch(`${WP_URL()}/wp-json/wp/v2${path}`, {
+    headers: { Authorization: `Basic ${WP_AUTH()}` },
+  })
+
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`WordPress API ${res.status}: ${text}`)
+  }
+
+  return {
+    data: await res.json(),
+    totalPages: Number(res.headers.get("X-WP-TotalPages") ?? 1),
+    totalItems: Number(res.headers.get("X-WP-Total") ?? 0),
+  }
+}
+
 // --- Posts ---
 
 export interface WPPost {
@@ -162,4 +181,120 @@ export async function findOrCreateCategory(name: string): Promise<number> {
     body: JSON.stringify({ name }),
   })
   return created.id
+}
+
+// --- Full site content audit ---
+
+export interface WPPostSummary {
+  id: number
+  title: string
+  slug: string
+  status: string
+  link: string
+  date: string
+  modified: string
+  categories: number[]
+  excerpt: string
+  word_count?: number
+}
+
+export interface SiteContentAudit {
+  total: number
+  byStatus: Record<string, number>
+  byCategory: Record<string, { name: string; count: number }>
+  articles: WPPostSummary[]
+  oldArticles: WPPostSummary[]
+  recentArticles: WPPostSummary[]
+}
+
+export async function getAllPostsAudit(): Promise<SiteContentAudit> {
+  const PER_PAGE = 100
+
+  // First page to get total
+  const first = await wpFetchWithHeaders<WPPostRaw[]>(
+    `/posts?per_page=${PER_PAGE}&page=1&status=any&_fields=id,title,slug,status,link,date,modified,categories,excerpt`,
+  )
+
+  const allPosts: WPPostRaw[] = [...first.data]
+
+  // Fetch remaining pages in parallel
+  if (first.totalPages > 1) {
+    const pageNums = Array.from({ length: first.totalPages - 1 }, (_, i) => i + 2)
+    const pages = await Promise.all(
+      pageNums.map((p) =>
+        wpFetchWithHeaders<WPPostRaw[]>(
+          `/posts?per_page=${PER_PAGE}&page=${p}&status=any&_fields=id,title,slug,status,link,date,modified,categories,excerpt`,
+        ).then((r) => r.data),
+      ),
+    )
+    allPosts.push(...pages.flat())
+  }
+
+  // Fetch category map
+  const cats = await listCategories()
+  const catMap = Object.fromEntries(cats.map((c) => [c.id, c.name]))
+
+  // Aggregate by status
+  const byStatus: Record<string, number> = {}
+  const byCategoryCount: Record<number, number> = {}
+
+  for (const p of allPosts) {
+    byStatus[p.status] = (byStatus[p.status] ?? 0) + 1
+    for (const catId of p.categories ?? []) {
+      byCategoryCount[catId] = (byCategoryCount[catId] ?? 0) + 1
+    }
+  }
+
+  const byCategory: Record<string, { name: string; count: number }> = {}
+  for (const [catId, count] of Object.entries(byCategoryCount)) {
+    const name = catMap[Number(catId)] ?? `Catégorie #${catId}`
+    byCategory[catId] = { name, count }
+  }
+
+  const cutoff18months = new Date()
+  cutoff18months.setMonth(cutoff18months.getMonth() - 18)
+
+  const cutoff30days = new Date()
+  cutoff30days.setDate(cutoff30days.getDate() - 30)
+
+  const toSummary = (p: WPPostRaw): WPPostSummary => ({
+    id: p.id,
+    title: typeof p.title === "string" ? p.title : (p.title?.rendered ?? ""),
+    slug: p.slug,
+    status: p.status,
+    link: p.link,
+    date: p.date,
+    modified: p.modified,
+    categories: p.categories ?? [],
+    excerpt: (typeof p.excerpt === "string" ? p.excerpt : (p.excerpt?.rendered ?? "")).replace(/<[^>]*>/g, "").slice(0, 120),
+  })
+
+  const published = allPosts.filter((p) => p.status === "publish")
+
+  return {
+    total: allPosts.length,
+    byStatus,
+    byCategory,
+    articles: published.slice(0, 50).map(toSummary),
+    oldArticles: published
+      .filter((p) => new Date(p.modified) < cutoff18months)
+      .slice(0, 30)
+      .map(toSummary),
+    recentArticles: published
+      .filter((p) => new Date(p.date) >= cutoff30days)
+      .slice(0, 20)
+      .map(toSummary),
+  }
+}
+
+interface WPPostRaw {
+  id: number
+  title: { rendered: string } | string
+  slug: string
+  status: string
+  link: string
+  date: string
+  modified: string
+  categories: number[]
+  excerpt: { rendered: string } | string
 }

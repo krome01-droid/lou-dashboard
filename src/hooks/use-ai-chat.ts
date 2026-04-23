@@ -8,6 +8,8 @@ export function useAiChat() {
   const [isStreaming, setIsStreaming] = useState(false)
   const [currentToolCalls, setCurrentToolCalls] = useState<ToolCallResult[]>([])
   const [conversationId, setConversationId] = useState<number | null>(null)
+  const [lastSavedAt, setLastSavedAt] = useState<number>(0)
+  const [saveError, setSaveError] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
 
   const saveConversation = useCallback(
@@ -26,11 +28,14 @@ export function useAiChat() {
           body: JSON.stringify({ id: convId, title, messages: msgs }),
         })
         if (res.ok) {
+          setSaveError(null)
           const data = await res.json()
           return data.id as number
         }
-      } catch {
-        // Silent fail — conversation will be lost but chat continues
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+        setSaveError(err.error ?? `Sauvegarde échouée (${res.status})`)
+      } catch (e) {
+        setSaveError(e instanceof Error ? e.message : "Erreur réseau sauvegarde")
       }
       return convId
     },
@@ -44,6 +49,9 @@ export function useAiChat() {
       attachments,
       timestamp: new Date().toISOString(),
     }
+
+    // Capture messages state before any updates (used for save after streaming)
+    const messagesBeforeSend = [...messages]
 
     setMessages((prev) => [...prev, userMsg])
     setIsStreaming(true)
@@ -166,7 +174,6 @@ export function useAiChat() {
       }
 
       // Final update with tool calls
-      let finalMessages: ChatMessage[]
       if (toolCalls.length > 0) {
         setMessages((prev) => {
           const updated = [...prev]
@@ -174,25 +181,28 @@ export function useAiChat() {
           if (lastIdx >= 0 && updated[lastIdx].role === "assistant") {
             updated[lastIdx] = { ...updated[lastIdx], toolCalls: [...toolCalls] }
           }
-          finalMessages = updated
           return updated
         })
       }
 
-      // Auto-save conversation after streaming completes
-      setMessages((prev) => {
-        finalMessages = prev
-        return prev
-      })
-      // Use setTimeout to let state settle before saving
-      setTimeout(async () => {
-        setMessages((currentMsgs) => {
-          saveConversation(currentMsgs, conversationId).then((newId) => {
-            if (newId && newId !== conversationId) {
-              setConversationId(newId)
-            }
-          })
-          return currentMsgs
+      // Auto-save: build the final message list from known values to avoid
+      // calling async side effects inside a setMessages updater (React anti-pattern)
+      const finalMsgs: ChatMessage[] = [
+        ...messagesBeforeSend,
+        userMsg,
+        {
+          role: "assistant",
+          content: assistantText,
+          toolCalls: toolCalls.length > 0 ? [...toolCalls] : undefined,
+          timestamp: new Date().toISOString(),
+        },
+      ]
+      setTimeout(() => {
+        saveConversation(finalMsgs, conversationId).then((newId) => {
+          if (newId && newId !== conversationId) {
+            setConversationId(newId)
+          }
+          setLastSavedAt(Date.now())
         })
       }, 100)
     } catch (err) {
@@ -240,6 +250,8 @@ export function useAiChat() {
     isStreaming,
     currentToolCalls,
     conversationId,
+    lastSavedAt,
+    saveError,
     sendMessage,
     stopStreaming,
     loadConversation,

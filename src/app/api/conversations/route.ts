@@ -1,12 +1,27 @@
 import { getServerSession } from "next-auth"
 import { authOptions } from "@/lib/auth/options"
 import { query, execute } from "@/lib/db/connection"
+import { runMigrations } from "@/lib/db/migrate"
+
+let migrationAttempted = false
+
+async function ensureTables() {
+  if (migrationAttempted) return
+  migrationAttempted = true
+  try {
+    await runMigrations()
+  } catch {
+    // silent — will surface as query error below
+  }
+}
 
 export async function GET() {
   const session = await getServerSession(authOptions)
   if (!session) {
     return Response.json({ error: "Non autorise" }, { status: 401 })
   }
+
+  await ensureTables()
 
   try {
     const conversations = await query<{
@@ -39,6 +54,8 @@ export async function POST(req: Request) {
   if (!messages || !Array.isArray(messages)) {
     return Response.json({ error: "Messages requis" }, { status: 400 })
   }
+
+  await ensureTables()
 
   const messagesJson = JSON.stringify(messages)
 

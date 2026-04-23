@@ -1,6 +1,6 @@
 import type { ToolCallResult } from "./types"
 import { marked } from "marked"
-import { listPosts, createPost, updatePost, findOrCreateCategory, getMediaUrl, uploadMedia } from "@/lib/wordpress/client"
+import { listPosts, createPost, updatePost, findOrCreateCategory, getMediaUrl, uploadMedia, getAllPostsAudit } from "@/lib/wordpress/client"
 import { scheduleSocialPost } from "@/lib/ghl/social-planner"
 import { sendPreviewEmail, sendBulkEmail } from "@/lib/ghl/email"
 import { query, execute } from "@/lib/db/connection"
@@ -34,11 +34,15 @@ const toolHandlers: Record<string, ToolHandler> = {
       status: (input.status as "draft" | "publish") ?? "draft",
       categories: [categoryId],
       featured_media: input.featured_media ? Number(input.featured_media) : undefined,
-      meta: {
-        _yoast_wpseo_title: input.meta_title ? String(input.meta_title) : null,
-        _yoast_wpseo_metadesc: input.meta_description ? String(input.meta_description) : null,
-        _yoast_wpseo_focuskw: String(input.target_keyword ?? ""),
-      },
+      meta: Object.fromEntries(
+        (
+          [
+            ["_yoast_wpseo_title", input.meta_title ? String(input.meta_title) : null],
+            ["_yoast_wpseo_metadesc", input.meta_description ? String(input.meta_description) : null],
+            ["_yoast_wpseo_focuskw", input.target_keyword ? String(input.target_keyword) : null],
+          ] as [string, string | null][]
+        ).filter(([, v]) => v !== null),
+      ) as Record<string, string>,
     })
 
     // Log to content_log
@@ -125,6 +129,28 @@ const toolHandlers: Record<string, ToolHandler> = {
       return await sendPreviewEmail(subject, html_content)
     }
     return await sendBulkEmail(subject, html_content)
+  },
+
+  async get_site_content_audit(_input) {
+    const audit = await getAllPostsAudit()
+
+    return {
+      total_articles: audit.total,
+      published: audit.byStatus["publish"] ?? 0,
+      drafts: audit.byStatus["draft"] ?? 0,
+      by_category: Object.values(audit.byCategory).sort((a, b) => b.count - a.count),
+      old_articles_to_refresh: {
+        count: audit.oldArticles.length,
+        note: "Articles non modifiés depuis > 18 mois — candidats au content refresh",
+        articles: audit.oldArticles,
+      },
+      recent_articles: {
+        count: audit.recentArticles.length,
+        note: "Articles publiés dans les 30 derniers jours",
+        articles: audit.recentArticles,
+      },
+      sample_published: audit.articles,
+    }
   },
 
   async search_wp_posts(input) {

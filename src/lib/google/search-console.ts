@@ -114,8 +114,9 @@ export async function getTopPages(limit = 10) {
     dataState: "all",
   })
 
+  const siteOrigin = process.env.WP_URL ?? "https://autoecolemagazine.fr"
   return (response.rows ?? []).map((row) => ({
-    page: row.keys[0].replace(getSiteUrl(), ""),
+    page: row.keys[0].replace(siteOrigin, ""),
     clicks: row.clicks,
     impressions: row.impressions,
     ctr: Math.round(row.ctr * 1000) / 10,

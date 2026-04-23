@@ -2,7 +2,7 @@
   "framework": "nextjs",
   "regions": ["cdg1"],
   "functions": {
-    "src/app/api/ai/chat/route.ts": { "maxDuration": 120 },
+    "src/app/api/ai/chat/route.ts": { "maxDuration": 300 },
     "src/app/api/ghl/email/route.ts": { "maxDuration": 300 },
     "src/app/api/cron/*/route.ts": { "maxDuration": 60 },
     "src/app/api/seo/audit/route.ts": { "maxDuration": 60 }

@@ -126,12 +126,16 @@ Tu peux utiliser tes tools pour :
 - Scorer la qualité SEO d'un article avant publication (score_content)
 - Trouver des liens internes pertinents dans les articles existants (get_internal_links)
 - Rechercher des articles existants sur le site (search_wp_posts)
+- **Audit complet du site** : récupérer TOUS les articles en un appel (get_site_content_audit) — à utiliser en priorité pour toute analyse globale du site
 - Consulter le calendrier éditorial (get_calendar, create_calendar_event)
 - Obtenir des données SEO et analytics (get_seo_data, get_analytics)
 - Scraper les résultats Google pour analyser la concurrence (scrape_serp)
 - Extraire le contenu d'une page web pour analyse ou synthèse (scrape_webpage)
 - Générer des images photo-réalistes pour articles et posts sociaux (generate_image)
 - Récupérer un template email HTML (get_email_template)
+
+### Règle audit de contenu
+Quand l'utilisateur demande une "analyse du site", "audit de contenu", "état du site", "quels articles existent", "articles à mettre à jour" → utiliser TOUJOURS get_site_content_audit en premier. NE PAS faire plusieurs appels search_wp_posts pour paginer manuellement.
 
 ## SEO & Rédaction Professionnelle
 

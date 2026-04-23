@@ -59,6 +59,7 @@ async function createTask(prompt: string): Promise<string> {
       enableFallback: true,
       fallbackModel: "FLUX_MAX",
     }),
+    signal: AbortSignal.timeout(15000),
   })
 
   if (!res.ok) {
@@ -80,36 +81,44 @@ async function createTask(prompt: string): Promise<string> {
 /**
  * Poll task status until complete or timeout.
  */
-async function pollTask(taskId: string, timeoutMs = 75000): Promise<string[]> {
+async function pollTask(taskId: string, timeoutMs = 45000): Promise<string[]> {
   const apiKey = getApiKey()
   const deadline = Date.now() + timeoutMs
+  let poll = 0
 
   while (Date.now() < deadline) {
-    await sleep(3000)
+    // First 3 polls: 2s interval; then 4s to reduce pressure
+    await sleep(poll < 3 ? 2000 : 4000)
+    poll++
 
-    const res = await fetch(
-      `${KIE_BASE}/gpt4o-image/record-info?taskId=${encodeURIComponent(taskId)}`,
-      {
-        headers: { Authorization: `Bearer ${apiKey}` },
-      },
-    )
+    try {
+      const res = await fetch(
+        `${KIE_BASE}/gpt4o-image/record-info?taskId=${encodeURIComponent(taskId)}`,
+        {
+          headers: { Authorization: `Bearer ${apiKey}` },
+          signal: AbortSignal.timeout(8000),
+        },
+      )
 
-    if (!res.ok) continue
+      if (!res.ok) continue
 
-    const data = await res.json()
-    const task = data.data
+      const data = await res.json()
+      const task = data.data
 
-    if (!task) continue
+      if (!task) continue
 
-    if (task.status === "SUCCESS" && task.response?.resultUrls?.length > 0) {
-      return task.response.resultUrls
+      if (task.status === "SUCCESS" && task.response?.resultUrls?.length > 0) {
+        return task.response.resultUrls
+      }
+
+      if (task.status === "CREATE_TASK_FAILED" || task.status === "GENERATE_FAILED") {
+        throw new Error(`Kie.ai génération échouée: ${task.errorMessage ?? task.status}`)
+      }
+    } catch (err) {
+      // AbortError = poll fetch timed out, try next poll
+      if ((err as Error).name === "AbortError") continue
+      throw err
     }
-
-    if (task.status === "CREATE_TASK_FAILED" || task.status === "GENERATE_FAILED") {
-      throw new Error(`Kie.ai génération échouée: ${task.errorMessage ?? task.status}`)
-    }
-
-    // Still processing — continue polling
   }
 
   throw new Error("Kie.ai: timeout — la génération prend trop de temps")

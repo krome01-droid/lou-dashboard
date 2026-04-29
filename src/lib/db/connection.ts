@@ -46,7 +46,7 @@ function buildSql(
 
 // Strip any leading WordPress HTML error divs ($wpdb debug output) so JSON.parse
 // doesn't fail when the proxy returns "<div id="error">...</div>{...}".
-function extractJson(raw: string): string {
+export function extractJson(raw: string): string {
   const start = raw.indexOf("{")
   const startArr = raw.indexOf("[")
   const jsonStart =

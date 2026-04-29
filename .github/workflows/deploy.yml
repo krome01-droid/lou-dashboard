@@ -1,0 +1,50 @@
+# ============================================
+# LOU Dashboard — Deploy to Hostinger VPS
+# ============================================
+name: Deploy LOU Dashboard
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to Hostinger VPS
+        uses: hostinger/deploy-on-vps@v1
+        with:
+          api-key: ${{ secrets.HOSTINGER_API_KEY }}
+          virtual-machine: ${{ vars.HOSTINGER_VM_ID }}
+          project-name: lou-dashboard
+          docker-compose-path: docker-compose.yml
+          environment-variables: |
+            NODE_ENV=production
+            PORT=3847
+            HOSTNAME=0.0.0.0
+            NEXTAUTH_URL=https://agent.autoecolemagazine.fr/admin-lou
+            NEXTAUTH_SECRET=${{ secrets.NEXTAUTH_SECRET }}
+            ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
+            WP_URL=https://autoecolemagazine.fr
+            WP_USERNAME=${{ secrets.WP_USERNAME }}
+            WP_APP_PASSWORD=${{ secrets.WP_APP_PASSWORD }}
+            MYSQL_PROXY_URL=https://autoecolemagazine.fr/wp-json/lou/v1/db
+            MYSQL_PROXY_SECRET=${{ secrets.MYSQL_PROXY_SECRET }}
+            GHL_PIT=${{ secrets.GHL_PIT }}
+            GHL_API_V1_KEY=${{ secrets.GHL_API_V1_KEY }}
+            GHL_LOCATION_ID=${{ vars.GHL_LOCATION_ID }}
+            GHL_USER_ID=${{ vars.GHL_USER_ID }}
+            ONESIGNAL_APP_ID=${{ vars.ONESIGNAL_APP_ID }}
+            ONESIGNAL_REST_API_KEY=${{ secrets.ONESIGNAL_REST_API_KEY }}
+            KIE_API_KEY=${{ secrets.KIE_API_KEY }}
+            APIFY_API_TOKEN=${{ secrets.APIFY_API_TOKEN }}
+            GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
+            GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
+            GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}
+            GOOGLE_REFRESH_TOKEN=${{ secrets.GOOGLE_REFRESH_TOKEN }}
+            GA4_PROPERTY_ID=${{ vars.GA4_PROPERTY_ID }}
+            SEARCH_CONSOLE_SITE_URL=sc-domain:autoecolemagazine.fr
+            CRON_SECRET=${{ secrets.CRON_SECRET }}

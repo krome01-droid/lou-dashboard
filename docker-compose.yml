@@ -1,0 +1,73 @@
+# ============================================
+# LOU Dashboard — Docker Compose (Hostinger VPS)
+# Déployé via GitHub Actions → hostinger/deploy-on-vps
+# ============================================
+
+services:
+  lou-dashboard:
+    build: .
+    container_name: lou-dashboard
+    restart: unless-stopped
+    ports:
+      - "3847:3847"
+    environment:
+      # Runtime
+      - NODE_ENV=production
+      - PORT=3847
+      - HOSTNAME=0.0.0.0
+
+      # NextAuth
+      - NEXTAUTH_URL=${NEXTAUTH_URL}
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
+
+      # Anthropic
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+
+      # WordPress (o2switch)
+      - WP_URL=${WP_URL}
+      - WP_USERNAME=${WP_USERNAME}
+      - WP_APP_PASSWORD=${WP_APP_PASSWORD}
+
+      # MySQL proxy (WP mu-plugin)
+      - MYSQL_PROXY_URL=${MYSQL_PROXY_URL}
+      - MYSQL_PROXY_SECRET=${MYSQL_PROXY_SECRET}
+
+      # GoHighLevel
+      - GHL_PIT=${GHL_PIT}
+      - GHL_API_V1_KEY=${GHL_API_V1_KEY}
+      - GHL_LOCATION_ID=${GHL_LOCATION_ID}
+      - GHL_USER_ID=${GHL_USER_ID}
+
+      # OneSignal
+      - ONESIGNAL_APP_ID=${ONESIGNAL_APP_ID}
+      - ONESIGNAL_REST_API_KEY=${ONESIGNAL_REST_API_KEY}
+
+      # Kie.ai (images IA)
+      - KIE_API_KEY=${KIE_API_KEY}
+
+      # Apify
+      - APIFY_API_TOKEN=${APIFY_API_TOKEN}
+
+      # Google (GA4 + Search Console)
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - GOOGLE_REFRESH_TOKEN=${GOOGLE_REFRESH_TOKEN}
+      - GA4_PROPERTY_ID=${GA4_PROPERTY_ID}
+      - SEARCH_CONSOLE_SITE_URL=${SEARCH_CONSOLE_SITE_URL}
+
+      # Cron
+      - CRON_SECRET=${CRON_SECRET}
+
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3847/api/auth/session"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

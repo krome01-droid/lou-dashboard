@@ -2,6 +2,8 @@
  * Run database migrations via the WP REST proxy on o2switch.
  */
 
+import { extractJson } from "./connection"
+
 export async function runMigrations(): Promise<string[]> {
   const proxyUrl = process.env.MYSQL_PROXY_URL
   const proxySecret = process.env.MYSQL_PROXY_SECRET
@@ -22,10 +24,13 @@ export async function runMigrations(): Promise<string[]> {
 
     if (!res.ok) {
       const text = await res.text()
-      return [`ERREUR: HTTP ${res.status} — ${text}`]
+      return [`ERREUR: HTTP ${res.status} — ${text.slice(0, 200)}`]
     }
 
-    const data = await res.json()
+    // Strip leading WP HTML error divs before parsing (same as connection.ts)
+    const raw = await res.text()
+    const clean = extractJson(raw)
+    const data = JSON.parse(clean)
     return data.results ?? ["Migration terminée"]
   } catch (err) {
     return [`ERREUR: ${err instanceof Error ? err.message : String(err)}`]

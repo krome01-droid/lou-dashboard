@@ -1,0 +1,12 @@
+.git
+.github
+node_modules
+.next
+.env*
+!.env.example
+README.md
+CLAUDE.md
+AGENTS.md
+*.md
+.claude
+docs

@@ -54,10 +54,8 @@ async function createTask(prompt: string): Promise<string> {
     },
     body: JSON.stringify({
       prompt,
-      size: "3:2",
+      size: "1:1",
       isEnhance: false,
-      enableFallback: true,
-      fallbackModel: "FLUX_MAX",
     }),
     signal: AbortSignal.timeout(20000),
   })

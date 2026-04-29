@@ -19,6 +19,7 @@ jobs:
         with:
           api-key: ${{ secrets.HOSTINGER_API_KEY }}
           virtual-machine: ${{ vars.HOSTINGER_VM_ID }}
+          personal-token: ${{ secrets.GH_PAT }}
           project-name: lou-dashboard
           docker-compose-path: docker-compose.yml
           environment-variables: |

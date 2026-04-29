@@ -24,7 +24,7 @@ COPY --from=base /app/.next/static ./.next/static
 COPY --from=base /app/public ./public
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:3847/api/auth/session || exit 1
+  CMD wget --no-verbose --tries=1 --spider http://localhost:3847/admin-lou/api/auth/session || exit 1
 
 EXPOSE 3847
 ENV PORT=3847

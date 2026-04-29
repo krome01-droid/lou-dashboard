@@ -67,7 +67,7 @@ services:
       - "traefik.http.services.lou-dashboard.loadbalancer.server.port=3847"
 
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3847/api/auth/session"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3847/admin-lou/api/auth/session"]
       interval: 30s
       timeout: 10s
       retries: 3

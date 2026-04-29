@@ -21,7 +21,9 @@ function LoginForm() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
   const searchParams = useSearchParams()
-  const callbackUrl = searchParams.get("callbackUrl") ?? "/"
+  const raw = searchParams.get("callbackUrl") ?? "/admin-lou"
+  // Sanitize: /signin doesn't exist, fallback to dashboard root
+  const callbackUrl = raw.endsWith("/signin") ? "/admin-lou" : raw
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()

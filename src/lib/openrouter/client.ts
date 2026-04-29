@@ -111,7 +111,9 @@ async function pollTask(taskId: string, timeoutMs = 110000): Promise<string[]> {
       }
 
       if (task.status === "CREATE_TASK_FAILED" || task.status === "GENERATE_FAILED") {
-        throw new Error(`Kie.ai génération échouée: ${task.errorMessage ?? task.status}`)
+        throw new Error(
+          `Kie.ai génération échouée (${task.status}). Vérifiez le solde de crédits sur kie.ai — le compte est peut-être épuisé.`,
+        )
       }
     } catch (err) {
       // AbortError = poll fetch timed out, try next poll

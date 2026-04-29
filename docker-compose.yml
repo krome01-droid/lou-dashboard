@@ -1,11 +1,11 @@
 # ============================================
 # LOU Dashboard — Docker Compose (Hostinger VPS)
-# Déployé via GitHub Actions → hostinger/deploy-on-vps
+# Image pré-buildée sur GHCR via GitHub Actions
 # ============================================
 
 services:
   lou-dashboard:
-    build: .
+    image: ghcr.io/krome01-droid/lou-dashboard:latest
     container_name: lou-dashboard
     restart: unless-stopped
     ports:
@@ -42,7 +42,7 @@ services:
       - ONESIGNAL_APP_ID=${ONESIGNAL_APP_ID}
       - ONESIGNAL_REST_API_KEY=${ONESIGNAL_REST_API_KEY}
 
-      # Kie.ai (images IA)
+      # Kie.ai
       - KIE_API_KEY=${KIE_API_KEY}
 
       # Apify

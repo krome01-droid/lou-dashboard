@@ -5,9 +5,11 @@
     "src/app/api/ai/chat/route.ts": { "maxDuration": 300 },
     "src/app/api/ghl/email/route.ts": { "maxDuration": 300 },
     "src/app/api/cron/*/route.ts": { "maxDuration": 60 },
+    "src/app/api/reports/run/route.ts": { "maxDuration": 60 },
     "src/app/api/seo/audit/route.ts": { "maxDuration": 60 }
   },
   "crons": [
+    { "path": "/api/cron/daily-brief", "schedule": "0 7 * * *" },
     { "path": "/api/cron/veille", "schedule": "0 7 * * 1-5" },
     { "path": "/api/cron/social-auto", "schedule": "0 9 * * 1,3,5" },
     { "path": "/api/cron/newsletter", "schedule": "0 8 * * 1" },

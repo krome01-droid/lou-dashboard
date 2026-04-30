@@ -66,6 +66,7 @@ jobs:
             ONESIGNAL_APP_ID=${{ vars.ONESIGNAL_APP_ID }}
             ONESIGNAL_REST_API_KEY=${{ secrets.ONESIGNAL_REST_API_KEY }}
             KIE_API_KEY=${{ secrets.KIE_API_KEY }}
+            FAL_API_KEY=${{ secrets.FAL_API_KEY }}
             APIFY_API_TOKEN=${{ secrets.APIFY_API_TOKEN }}
             GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
             GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}

@@ -42,8 +42,9 @@ services:
       - ONESIGNAL_APP_ID=${ONESIGNAL_APP_ID}
       - ONESIGNAL_REST_API_KEY=${ONESIGNAL_REST_API_KEY}
 
-      # Kie.ai
+      # Kie.ai (primaire) + Fal.ai (fallback)
       - KIE_API_KEY=${KIE_API_KEY}
+      - FAL_API_KEY=${FAL_API_KEY}
 
       # Apify
       - APIFY_API_TOKEN=${APIFY_API_TOKEN}

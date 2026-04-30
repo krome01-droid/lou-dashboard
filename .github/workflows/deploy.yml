@@ -39,6 +39,15 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Build and push lou-cron to GHCR
+        uses: docker/build-push-action@v6
+        with:
+          context: ./cron
+          push: true
+          tags: ghcr.io/krome01-droid/lou-cron:latest
+          cache-from: type=gha,scope=cron
+          cache-to: type=gha,mode=max,scope=cron
+
       - name: Deploy to Hostinger VPS
         uses: hostinger/deploy-on-vps@v1
         with:

@@ -79,3 +79,20 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+  lou-cron:
+    image: ghcr.io/krome01-droid/lou-cron:latest
+    container_name: lou-cron
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - CRON_SECRET=${CRON_SECRET}
+      - LOU_BASE_URL=http://127.0.0.1:3847/admin-lou
+      - TZ=Europe/Paris
+    depends_on:
+      - lou-dashboard
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "3"

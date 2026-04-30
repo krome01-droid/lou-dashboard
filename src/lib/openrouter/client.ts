@@ -1,9 +1,11 @@
 /**
  * Kie.ai API client for image generation (GPT-4o Image / Nano Banana).
+ * Fal.ai (flux-pro) is used as automatic fallback when Kie.ai fails.
  *
  * Kie.ai is asynchronous: POST to create a task, then poll for results.
  * Docs: https://docs.kie.ai/4o-image-api/generate-4-o-image
  */
+import { generateImageFal } from "@/lib/fal/client"
 
 const KIE_BASE = "https://api.kie.ai/api/v1"
 
@@ -126,19 +128,32 @@ async function pollTask(taskId: string, timeoutMs = 110000): Promise<string[]> {
 }
 
 /**
- * Generate an image via Kie.ai.
+ * Generate an image — tries Kie.ai first, falls back to Fal.ai (flux-pro) on any error.
  *
  * @param contextPrompt - Scene description from Lou
- * @returns Object with the hosted image URL and taskId
+ * @returns Object with the hosted image URL and taskId/requestId
  */
 export async function generateImage(contextPrompt: string): Promise<GeneratedImage> {
   const fullPrompt = `${contextPrompt}\n\n${IMAGE_STYLE_PROMPT}`
 
-  const taskId = await createTask(fullPrompt)
-  const urls = await pollTask(taskId)
+  // Primary: Kie.ai
+  try {
+    const taskId = await createTask(fullPrompt)
+    const urls = await pollTask(taskId)
+    return { url: urls[0], taskId }
+  } catch (kieError) {
+    const kieMsg = kieError instanceof Error ? kieError.message : String(kieError)
+    console.warn(`[generateImage] Kie.ai failed (${kieMsg}), trying Fal.ai fallback…`)
 
-  return {
-    url: urls[0],
-    taskId,
+    // Fallback: Fal.ai (flux-pro)
+    try {
+      const { url, requestId } = await generateImageFal(fullPrompt)
+      return { url, taskId: `fal:${requestId}` }
+    } catch (falError) {
+      const falMsg = falError instanceof Error ? falError.message : String(falError)
+      throw new Error(
+        `Génération d'image échouée — Kie.ai: ${kieMsg} | Fal.ai: ${falMsg}`,
+      )
+    }
   }
 }

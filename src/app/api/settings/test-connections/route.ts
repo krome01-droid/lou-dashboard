@@ -187,7 +187,26 @@ export async function GET() {
     })
   }
 
-  // 7. Apify
+  // 7. Fal.ai (image generation fallback)
+  try {
+    if (!process.env.FAL_API_KEY) {
+      results.push({ name: "fal", status: "not_configured" })
+    } else {
+      results.push({
+        name: "fal",
+        status: "ok",
+        detail: `Configuré — Fallback images (flux-pro)`,
+      })
+    }
+  } catch (err) {
+    results.push({
+      name: "fal",
+      status: "error",
+      detail: err instanceof Error ? err.message : String(err),
+    })
+  }
+
+  // 8. Apify
   try {
     if (!process.env.APIFY_API_TOKEN) {
       results.push({ name: "apify", status: "not_configured" })

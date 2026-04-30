@@ -58,7 +58,12 @@ const CONNECTION_META: Record<
   kie: {
     label: "Kie.ai",
     icon: ImageIcon,
-    description: "Génération d'images IA (GPT-4o Image)",
+    description: "Génération d'images IA (GPT-4o Image) — primaire",
+  },
+  fal: {
+    label: "Fal.ai",
+    icon: ImageIcon,
+    description: "Génération d'images IA (flux-pro) — fallback auto",
   },
   apify: {
     label: "Apify",

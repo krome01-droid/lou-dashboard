@@ -12,6 +12,7 @@ import {
   CalendarDays,
   Search,
   BarChart3,
+  FileBarChart,
   Settings,
 } from "lucide-react"
 
@@ -24,6 +25,7 @@ const NAV_ITEMS = [
   { href: "/calendar", label: "Calendrier", icon: CalendarDays },
   { href: "/seo", label: "SEO / GEO", icon: Search },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
+  { href: "/reports", label: "Rapports", icon: FileBarChart },
   { href: "/settings", label: "Paramètres", icon: Settings },
 ]
 

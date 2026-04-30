@@ -6,6 +6,7 @@
 services:
   lou-dashboard:
     image: ghcr.io/krome01-droid/lou-dashboard:latest
+    pull_policy: always
     container_name: lou-dashboard
     restart: unless-stopped
     ports:
@@ -82,6 +83,7 @@ services:
 
   lou-cron:
     image: ghcr.io/krome01-droid/lou-cron:latest
+    pull_policy: always
     container_name: lou-cron
     restart: unless-stopped
     network_mode: host

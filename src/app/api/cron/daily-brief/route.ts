@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk"
 import { listPosts } from "@/lib/wordpress/client"
-import { execute } from "@/lib/db/connection"
+import { execute, query } from "@/lib/db/connection"
 
 export async function GET(req: Request) {
   if (req.headers.get("Authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -20,10 +20,10 @@ export async function GET(req: Request) {
     // Gather site data in parallel
     const [posts, recentConversations, seoReports] = await Promise.all([
       listPosts({ per_page: 50, status: "publish" }).catch(() => []),
-      execute<{ title: string; created_at: string }>(
+      query<{ title: string; created_at: string }>(
         `SELECT title, created_at FROM wp_lou_conversations ORDER BY created_at DESC LIMIT 5`,
       ).catch(() => []),
-      execute<{ summary: string; data_json: string; created_at: string }>(
+      query<{ summary: string; data_json: string; created_at: string }>(
         `SELECT summary, data_json, created_at FROM wp_lou_seo_reports ORDER BY created_at DESC LIMIT 1`,
       ).catch(() => []),
     ])

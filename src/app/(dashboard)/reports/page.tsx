@@ -1,12 +1,15 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
+import ReactMarkdown from "react-markdown"
+import remarkGfm from "remark-gfm"
 import { Header } from "@/components/layout/header"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import {
+  ChevronDown,
   FileBarChart,
   Loader2,
   PlayCircle,
@@ -226,27 +229,35 @@ export default function ReportsPage() {
                 const open = openId === id
                 const meta = parseJson<{ score?: number }>(b.meta_json)
                 return (
-                  <Card key={id}>
+                  <Card key={id} className="overflow-hidden transition-shadow hover:shadow-sm">
                     <button
                       type="button"
                       className="w-full text-left p-4 hover:bg-muted/40 flex items-start justify-between gap-3"
                       onClick={() => setOpenId(open ? null : id)}
                     >
-                      <div>
-                        <p className="font-medium text-sm">{b.title}</p>
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          {formatDate(b.created_at)}
-                        </p>
+                      <div className="flex items-start gap-3 min-w-0">
+                        <div className="rounded-md bg-primary/10 p-2 shrink-0">
+                          <Sparkles className="h-4 w-4 text-primary" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="font-semibold text-sm truncate">{b.title}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {formatDate(b.created_at)}
+                          </p>
+                        </div>
                       </div>
-                      {meta?.score !== undefined && (
-                        <Badge variant="secondary">Score {Math.round(meta.score)}/100</Badge>
-                      )}
+                      <div className="flex items-center gap-2 shrink-0">
+                        {meta?.score !== undefined && <ScoreBadge score={meta.score} />}
+                        <ChevronDown
+                          className={`h-4 w-4 text-muted-foreground transition-transform ${
+                            open ? "rotate-180" : ""
+                          }`}
+                        />
+                      </div>
                     </button>
                     {open && b.content_markdown && (
-                      <div className="border-t px-4 py-3">
-                        <pre className="text-xs whitespace-pre-wrap font-sans text-muted-foreground">
-                          {b.content_markdown}
-                        </pre>
+                      <div className="border-t bg-muted/20 px-6 py-5">
+                        <Markdown content={b.content_markdown} />
                       </div>
                     )}
                   </Card>
@@ -261,37 +272,52 @@ export default function ReportsPage() {
                 const open = openId === id
                 const meta = parseJson<{ score?: number; recommendations?: unknown[] }>(r.data_json)
                 return (
-                  <Card key={id}>
+                  <Card key={id} className="overflow-hidden transition-shadow hover:shadow-sm">
                     <button
                       type="button"
                       className="w-full text-left p-4 hover:bg-muted/40 flex items-start justify-between gap-3"
                       onClick={() => setOpenId(open ? null : id)}
                     >
-                      <div>
-                        <p className="font-medium text-sm capitalize">
-                          Rapport {r.report_type}
-                        </p>
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          {formatDate(r.created_at)}
-                          {r.period_start && r.period_end && (
-                            <>
-                              {" "}
-                              · période {r.period_start} → {r.period_end}
-                            </>
-                          )}
-                        </p>
+                      <div className="flex items-start gap-3 min-w-0">
+                        <div className="rounded-md bg-primary/10 p-2 shrink-0">
+                          <TrendingUp className="h-4 w-4 text-primary" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="font-semibold text-sm capitalize">
+                            Rapport {r.report_type}
+                          </p>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {formatDate(r.created_at)}
+                            {r.period_start && r.period_end && (
+                              <>
+                                {" "}
+                                · période {r.period_start} → {r.period_end}
+                              </>
+                            )}
+                          </p>
+                        </div>
                       </div>
-                      {meta?.score !== undefined && (
-                        <Badge variant="secondary">Score {Math.round(meta.score)}/100</Badge>
-                      )}
+                      <div className="flex items-center gap-2 shrink-0">
+                        {meta?.score !== undefined && <ScoreBadge score={meta.score} />}
+                        <ChevronDown
+                          className={`h-4 w-4 text-muted-foreground transition-transform ${
+                            open ? "rotate-180" : ""
+                          }`}
+                        />
+                      </div>
                     </button>
                     {open && (
-                      <div className="border-t px-4 py-3 space-y-2">
-                        {r.summary && <p className="text-sm">{r.summary}</p>}
+                      <div className="border-t bg-muted/20 px-6 py-5 space-y-3">
+                        {r.summary && <Markdown content={r.summary} />}
                         {r.data_json && (
-                          <pre className="text-xs whitespace-pre-wrap font-mono text-muted-foreground bg-muted/40 p-2 rounded">
-                            {JSON.stringify(parseJson(r.data_json) ?? r.data_json, null, 2)}
-                          </pre>
+                          <details className="text-xs">
+                            <summary className="cursor-pointer text-muted-foreground hover:text-foreground select-none">
+                              Données brutes (JSON)
+                            </summary>
+                            <pre className="mt-2 whitespace-pre-wrap font-mono text-muted-foreground bg-background border p-3 rounded max-h-96 overflow-auto">
+                              {JSON.stringify(parseJson(r.data_json) ?? r.data_json, null, 2)}
+                            </pre>
+                          </details>
                         )}
                       </div>
                     )}
@@ -307,29 +333,39 @@ export default function ReportsPage() {
                 const open = openId === id
                 const meta = parseJson<{ priority?: string }>(v.meta_json)
                 return (
-                  <Card key={id}>
+                  <Card key={id} className="overflow-hidden transition-shadow hover:shadow-sm">
                     <button
                       type="button"
                       className="w-full text-left p-4 hover:bg-muted/40 flex items-start justify-between gap-3"
                       onClick={() => setOpenId(open ? null : id)}
                     >
-                      <div>
-                        <p className="font-medium text-sm">{v.title}</p>
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          {formatDate(v.created_at)} · statut {v.status}
-                        </p>
+                      <div className="flex items-start gap-3 min-w-0">
+                        <div className="rounded-md bg-primary/10 p-2 shrink-0">
+                          <Newspaper className="h-4 w-4 text-primary" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="font-semibold text-sm truncate">{v.title}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {formatDate(v.created_at)} · statut {v.status}
+                          </p>
+                        </div>
                       </div>
-                      {meta?.priority && (
-                        <Badge variant={meta.priority === "high" ? "default" : "secondary"}>
-                          {meta.priority}
-                        </Badge>
-                      )}
+                      <div className="flex items-center gap-2 shrink-0">
+                        {meta?.priority && (
+                          <Badge variant={meta.priority === "high" ? "default" : "secondary"}>
+                            {meta.priority}
+                          </Badge>
+                        )}
+                        <ChevronDown
+                          className={`h-4 w-4 text-muted-foreground transition-transform ${
+                            open ? "rotate-180" : ""
+                          }`}
+                        />
+                      </div>
                     </button>
                     {open && v.content_markdown && (
-                      <div className="border-t px-4 py-3">
-                        <pre className="text-xs whitespace-pre-wrap font-sans text-muted-foreground">
-                          {v.content_markdown}
-                        </pre>
+                      <div className="border-t bg-muted/20 px-6 py-5">
+                        <Markdown content={v.content_markdown} />
                       </div>
                     )}
                   </Card>
@@ -351,6 +387,98 @@ function EmptyState({ label }: { label: string }) {
         {label}
       </CardContent>
     </Card>
+  )
+}
+
+function ScoreBadge({ score }: { score: number }) {
+  const rounded = Math.round(score)
+  const tone =
+    rounded >= 80
+      ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20"
+      : rounded >= 60
+        ? "bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/20"
+        : "bg-red-500/10 text-red-700 dark:text-red-400 border-red-500/20"
+  return (
+    <span
+      className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold tabular-nums ${tone}`}
+    >
+      {rounded}/100
+    </span>
+  )
+}
+
+function Markdown({ content }: { content: string }) {
+  return (
+    <div className="text-sm leading-relaxed text-foreground/90 space-y-2.5">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          h1: ({ children }) => (
+            <h1 className="text-base font-semibold tracking-tight mt-4 mb-2 first:mt-0">
+              {children}
+            </h1>
+          ),
+          h2: ({ children }) => (
+            <h2 className="text-sm font-semibold tracking-tight mt-4 mb-2 first:mt-0 pb-1 border-b">
+              {children}
+            </h2>
+          ),
+          h3: ({ children }) => (
+            <h3 className="text-sm font-semibold tracking-tight mt-3 mb-1.5 first:mt-0">
+              {children}
+            </h3>
+          ),
+          p: ({ children }) => <p className="leading-relaxed">{children}</p>,
+          ul: ({ children }) => (
+            <ul className="list-disc pl-5 space-y-1 marker:text-muted-foreground">{children}</ul>
+          ),
+          ol: ({ children }) => (
+            <ol className="list-decimal pl-5 space-y-1 marker:text-muted-foreground">
+              {children}
+            </ol>
+          ),
+          li: ({ children }) => <li className="leading-relaxed">{children}</li>,
+          strong: ({ children }) => (
+            <strong className="font-semibold text-foreground">{children}</strong>
+          ),
+          em: ({ children }) => <em className="italic">{children}</em>,
+          a: ({ children, href }) => (
+            <a
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary underline-offset-2 hover:underline"
+            >
+              {children}
+            </a>
+          ),
+          code: ({ children }) => (
+            <code className="bg-muted text-foreground px-1.5 py-0.5 rounded text-xs font-mono">
+              {children}
+            </code>
+          ),
+          blockquote: ({ children }) => (
+            <blockquote className="border-l-2 border-primary/40 pl-3 italic text-muted-foreground">
+              {children}
+            </blockquote>
+          ),
+          hr: () => <hr className="my-4 border-border" />,
+          table: ({ children }) => (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs border-collapse">{children}</table>
+            </div>
+          ),
+          th: ({ children }) => (
+            <th className="border-b bg-muted/50 px-2 py-1.5 text-left font-semibold">
+              {children}
+            </th>
+          ),
+          td: ({ children }) => <td className="border-b px-2 py-1.5">{children}</td>,
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
   )
 }
 

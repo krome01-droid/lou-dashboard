@@ -25,6 +25,7 @@ interface DashboardData {
   thisMonthArticles: number
   recentActivity: { title: string; type: string; status: string; created_at: string }[]
   upcomingEvents: { title: string; content_type: string; planned_date: string }[]
+  latestSeoScore: number | null
 }
 
 const TYPE_LABELS: Record<string, string> = {
@@ -74,14 +75,14 @@ export default function DashboardPage() {
           />
           <MetricCard
             title="Mots-cles top 10"
-            value="2"
-            description="Google"
+            value={loading ? "..." : "—"}
+            description="Search Console"
             icon={Search}
           />
           <MetricCard
-            title="Score SEO moy."
-            value="62"
-            description="Sur 100"
+            title="Score SEO"
+            value={loading ? "..." : (data?.latestSeoScore != null ? Math.round(data.latestSeoScore) : "—")}
+            description="Dernier rapport LOU"
             icon={BarChart3}
           />
         </div>

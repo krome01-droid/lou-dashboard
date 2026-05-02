@@ -12,10 +12,13 @@ export const authOptions: NextAuthOptions = {
       async authorize(credentials) {
         if (!credentials?.username || !credentials?.password) return null
 
-        // Local admin account (lou / AEM-agent-2026!)
+        // Local admin account — credentials stored in ADMIN_USERNAME / ADMIN_PASSWORD env vars
+        const adminUser = process.env.ADMIN_USERNAME ?? "lou"
+        const adminPass = process.env.ADMIN_PASSWORD
         if (
-          credentials.username === "lou" &&
-          credentials.password === "AEM-agent-2026!"
+          adminPass &&
+          credentials.username === adminUser &&
+          credentials.password === adminPass
         ) {
           return {
             id: "lou",

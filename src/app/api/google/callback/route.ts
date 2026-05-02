@@ -1,7 +1,17 @@
+import { getToken } from "next-auth/jwt"
 import { exchangeCodeForTokens } from "@/lib/google/auth"
 import { execute } from "@/lib/db/connection"
+import type { NextRequest } from "next/server"
 
-export async function GET(req: Request) {
+export async function GET(req: NextRequest) {
+  // OAuth callbacks preserve the browser session — require authentication
+  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
+  if (!token) {
+    return new Response(htmlPage("Erreur", "Vous devez être connecté pour associer un compte Google.", true), {
+      headers: { "Content-Type": "text/html; charset=utf-8" },
+    })
+  }
+
   const { searchParams } = new URL(req.url)
   const code = searchParams.get("code")
   const error = searchParams.get("error")
@@ -35,24 +45,27 @@ export async function GET(req: Request) {
       )
     }
 
-    // Store refresh token in DB for persistence across deploys
+    // Store refresh token in a dedicated settings row — NOT in content_log
     try {
       await execute(
-        `INSERT INTO wp_lou_content_log (title, type, status, content_markdown, meta_json, created_by)
-         VALUES ('Google OAuth connected', 'article', 'draft', ?, '{}', 'system')`,
-        [`GOOGLE_REFRESH_TOKEN=${tokens.refresh_token}`],
+        `INSERT INTO wp_lou_settings (\`key\`, \`value\`, updated_at)
+         VALUES ('GOOGLE_REFRESH_TOKEN', ?, NOW())
+         ON DUPLICATE KEY UPDATE \`value\` = VALUES(\`value\`), updated_at = NOW()`,
+        [tokens.refresh_token],
       )
     } catch {
-      // DB may not be available
+      // Table may not exist yet — token must be set manually in env vars
     }
+
+    // Show masked token so the user can copy it to Vercel env vars if needed
+    const masked = `${tokens.refresh_token.slice(0, 8)}...${tokens.refresh_token.slice(-8)}`
 
     return new Response(
       htmlPage(
-        "Google connecte !",
-        `<p>Le refresh token a ete obtenu avec succes.</p>
-         <p style="margin-top:16px"><strong>Etape suivante :</strong> Ajoutez cette variable dans votre <code>.env.local</code> sur Vercel :</p>
-         <pre style="background:#1a1c1c;color:#e31e44;padding:16px;border-radius:8px;margin-top:12px;overflow-x:auto;font-size:13px;">GOOGLE_REFRESH_TOKEN=${tokens.refresh_token}</pre>
-         <p style="margin-top:16px">Puis redéployez le dashboard.</p>
+        "Google connecté !",
+        `<p>Le refresh token a été obtenu et sauvegardé en base de données.</p>
+         <p style="margin-top:16px">Token (masqué) : <code>${masked}</code></p>
+         <p style="margin-top:16px">Si vous devez l'ajouter manuellement dans Vercel, récupérez-le via la table <code>wp_lou_settings</code> (clé <code>GOOGLE_REFRESH_TOKEN</code>).</p>
          <p style="margin-top:16px"><a href="/admin-lou/settings" style="color:#e31e44;">Retour aux paramètres</a></p>`,
         false,
       ),

@@ -3,16 +3,20 @@ import { authOptions } from "@/lib/auth/options"
 import { query, execute } from "@/lib/db/connection"
 import { runMigrations } from "@/lib/db/migrate"
 
-let migrationAttempted = false
+// A Promise stored at module level so concurrent requests in the same serverless
+// instance share one migration run. Resets to null on failure so the next cold
+// start retries automatically.
+let migrationPromise: Promise<void> | null = null
 
 async function ensureTables() {
-  if (migrationAttempted) return
-  migrationAttempted = true
-  try {
-    await runMigrations()
-  } catch {
-    // silent — will surface as query error below
+  if (!migrationPromise) {
+    migrationPromise = runMigrations()
+      .then(() => undefined)
+      .catch(() => {
+        migrationPromise = null // allow retry on next request
+      })
   }
+  await migrationPromise
 }
 
 export async function GET() {

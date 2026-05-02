@@ -53,11 +53,26 @@ export async function GET() {
       // DB may not be migrated yet
     }
 
+    // Fetch latest SEO score from automated reports
+    let latestSeoScore: number | null = null
+    try {
+      const seoRows = await query<{ data_json: string }>(
+        "SELECT data_json FROM wp_lou_seo_reports ORDER BY created_at DESC LIMIT 1",
+      )
+      if (seoRows.length > 0) {
+        const parsed = JSON.parse(seoRows[0].data_json ?? "{}")
+        if (typeof parsed?.score === "number") latestSeoScore = parsed.score
+      }
+    } catch {
+      // DB may not be migrated yet
+    }
+
     return Response.json({
       totalArticles,
       thisMonthArticles,
       recentActivity,
       upcomingEvents,
+      latestSeoScore,
     })
   } catch (err) {
     return Response.json(

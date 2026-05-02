@@ -1,3 +1,6 @@
+import { getServerSession } from "next-auth"
+import { authOptions } from "@/lib/auth/options"
+
 interface ConnectionResult {
   name: string
   status: "ok" | "error" | "not_configured"
@@ -5,6 +8,10 @@ interface ConnectionResult {
 }
 
 export async function GET() {
+  const session = await getServerSession(authOptions)
+  if (!session) {
+    return Response.json({ error: "Non autorisé" }, { status: 401 })
+  }
   const results: ConnectionResult[] = []
 
   // 1. WordPress
@@ -239,7 +246,7 @@ export async function GET() {
     })
   }
 
-  // 7. GA4 / Search Console
+  // 9. GA4 / Search Console
   const hasOAuth = !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.GOOGLE_REFRESH_TOKEN)
   const hasSA = !!process.env.GOOGLE_SERVICE_ACCOUNT_JSON
   const hasGA4 = !!process.env.GA4_PROPERTY_ID

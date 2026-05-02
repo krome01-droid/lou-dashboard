@@ -8,6 +8,9 @@ export function useAiChat() {
   const [isStreaming, setIsStreaming] = useState(false)
   const [currentToolCalls, setCurrentToolCalls] = useState<ToolCallResult[]>([])
   const [conversationId, setConversationId] = useState<number | null>(null)
+  // Ref mirrors state so closures in sendMessage always read the latest id
+  // without being recreated on every id change.
+  const conversationIdRef = useRef<number | null>(null)
   const [lastSavedAt, setLastSavedAt] = useState<number>(0)
   const [saveError, setSaveError] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -198,8 +201,11 @@ export function useAiChat() {
         },
       ]
       setTimeout(() => {
-        saveConversation(finalMsgs, conversationId).then((newId) => {
-          if (newId && newId !== conversationId) {
+        // Read ref — always current, no stale closure issue
+        const currentId = conversationIdRef.current
+        saveConversation(finalMsgs, currentId).then((newId) => {
+          if (newId && newId !== conversationIdRef.current) {
+            conversationIdRef.current = newId
             setConversationId(newId)
           }
           setLastSavedAt(Date.now())
@@ -221,7 +227,7 @@ export function useAiChat() {
       setCurrentToolCalls([])
       abortRef.current = null
     }
-  }, [messages, conversationId, saveConversation])
+  }, [messages, saveConversation])
 
   const stopStreaming = useCallback(() => {
     abortRef.current?.abort()
@@ -233,6 +239,7 @@ export function useAiChat() {
       if (res.ok) {
         const data = await res.json()
         setMessages(data.messages || [])
+        conversationIdRef.current = id
         setConversationId(id)
       }
     } catch {
@@ -242,6 +249,7 @@ export function useAiChat() {
 
   const newConversation = useCallback(() => {
     setMessages([])
+    conversationIdRef.current = null
     setConversationId(null)
   }, [])
 

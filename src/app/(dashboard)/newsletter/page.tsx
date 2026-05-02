@@ -1,6 +1,7 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useMemo } from "react"
+import DOMPurify from "dompurify"
 import { Header } from "@/components/layout/header"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -75,6 +76,10 @@ const EMAIL_TEMPLATES = [
 export default function NewsletterPage() {
   const [subject, setSubject] = useState("")
   const [htmlContent, setHtmlContent] = useState("")
+  const safeHtmlPreview = useMemo(
+    () => DOMPurify.sanitize(htmlContent.replace(/\{\{contact\.first_name\}\}/g, "Laurent")),
+    [htmlContent],
+  )
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<SendResult | null>(null)
   const [showPreview, setShowPreview] = useState(false)
@@ -331,12 +336,7 @@ export default function NewsletterPage() {
                         </div>
                         <div
                           className="p-4 text-sm"
-                          dangerouslySetInnerHTML={{
-                            __html: htmlContent.replace(
-                              /\{\{contact\.first_name\}\}/g,
-                              "Laurent"
-                            ),
-                          }}
+                          dangerouslySetInnerHTML={{ __html: safeHtmlPreview }}
                         />
                       </div>
                     </CardContent>

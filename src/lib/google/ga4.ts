@@ -88,9 +88,9 @@ export async function getSessions(period: string) {
   const sec = durationSec % 60
 
   return {
-    sessions: parseInt(sessions),
-    pageviews: parseInt(pageviews),
-    users: parseInt(users),
+    sessions: parseInt(sessions, 10),
+    pageviews: parseInt(pageviews, 10),
+    users: parseInt(users, 10),
     avgDuration: `${min}:${String(sec).padStart(2, "0")}`,
     bounceRate: Math.round(parseFloat(bounceRate) * 100),
   }
@@ -112,7 +112,7 @@ export async function getTopPages(period: string, limit = 10) {
 
   return (report.rows ?? []).map((row) => ({
     path: row.dimensionValues?.[0]?.value ?? "",
-    views: parseInt(row.metricValues?.[0]?.value ?? "0"),
+    views: parseInt(row.metricValues?.[0]?.value ?? "0", 10),
     avgTime: (() => {
       const sec = Math.round(parseFloat(row.metricValues?.[1]?.value ?? "0"))
       return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`
@@ -133,12 +133,12 @@ export async function getTrafficSources(period: string) {
 
   const rows = report.rows ?? []
   const total = rows.reduce(
-    (sum, r) => sum + parseInt(r.metricValues?.[0]?.value ?? "0"),
+    (sum, r) => sum + parseInt(r.metricValues?.[0]?.value ?? "0", 10),
     0,
   )
 
   return rows.map((row) => {
-    const sessions = parseInt(row.metricValues?.[0]?.value ?? "0")
+    const sessions = parseInt(row.metricValues?.[0]?.value ?? "0", 10)
     return {
       source: row.dimensionValues?.[0]?.value ?? "Autre",
       sessions,
@@ -158,14 +158,14 @@ export async function getDevices(period: string) {
 
   const rows = report.rows ?? []
   const total = rows.reduce(
-    (sum, r) => sum + parseInt(r.metricValues?.[0]?.value ?? "0"),
+    (sum, r) => sum + parseInt(r.metricValues?.[0]?.value ?? "0", 10),
     0,
   )
 
   return rows.map((row) => ({
     device: row.dimensionValues?.[0]?.value ?? "Autre",
     percentage: total > 0
-      ? Math.round((parseInt(row.metricValues?.[0]?.value ?? "0") / total) * 100)
+      ? Math.round((parseInt(row.metricValues?.[0]?.value ?? "0", 10) / total) * 100)
       : 0,
   }))
 }
@@ -187,7 +187,7 @@ export async function getDailyVisits(period: string) {
       : dateStr
     return {
       date: formatted,
-      sessions: parseInt(row.metricValues?.[0]?.value ?? "0"),
+      sessions: parseInt(row.metricValues?.[0]?.value ?? "0", 10),
     }
   })
 }

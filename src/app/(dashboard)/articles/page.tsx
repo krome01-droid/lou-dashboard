@@ -1,6 +1,7 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useMemo } from "react"
+import { useRouter } from "next/navigation"
 import { Header } from "@/components/layout/header"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -16,6 +17,17 @@ import {
   Filter,
 } from "lucide-react"
 import Link from "next/link"
+
+// Decode HTML entities from WordPress titles (e.g. &#8217; → ') without rendering markup
+function decodeWpTitle(html: string): string {
+  return html.replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
+             .replace(/&amp;/g, "&")
+             .replace(/&lt;/g, "<")
+             .replace(/&gt;/g, ">")
+             .replace(/&quot;/g, '"')
+             .replace(/&apos;/g, "'")
+             .replace(/<[^>]*>/g, "")
+}
 
 interface Article {
   id: number
@@ -41,6 +53,7 @@ const STATUS_VARIANTS: Record<string, "default" | "secondary" | "outline"> = {
 }
 
 export default function ArticlesPage() {
+  const router = useRouter()
   const [articles, setArticles] = useState<Article[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState("")
@@ -159,16 +172,18 @@ export default function ArticlesPage() {
         ) : (
           <div className="space-y-3">
             {articles.map((article) => (
-              <Link key={article.id} href={`/articles/${article.id}`}>
-              <Card className="transition-shadow hover:shadow-md">
+              <Card
+                key={article.id}
+                className="transition-shadow hover:shadow-md cursor-pointer"
+                onClick={() => router.push(`/articles/${article.id}`)}
+              >
                 <CardContent className="p-4">
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
-                        <h3
-                          className="font-medium text-sm truncate"
-                          dangerouslySetInnerHTML={{ __html: article.title }}
-                        />
+                        <h3 className="font-medium text-sm truncate">
+                          {decodeWpTitle(article.title)}
+                        </h3>
                         <Badge variant={STATUS_VARIANTS[article.status] || "outline"}>
                           {STATUS_LABELS[article.status] || article.status}
                         </Badge>
@@ -185,7 +200,7 @@ export default function ArticlesPage() {
                         <span className="truncate">/{article.slug}</span>
                       </div>
                     </div>
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                       {article.status === "publish" && (
                         <Button
                           variant="ghost"
@@ -218,7 +233,6 @@ export default function ArticlesPage() {
                   </div>
                 </CardContent>
               </Card>
-              </Link>
             ))}
           </div>
         )}

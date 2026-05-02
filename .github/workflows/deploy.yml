@@ -62,6 +62,8 @@ jobs:
             HOSTNAME=0.0.0.0
             NEXTAUTH_URL=https://agent.autoecolemagazine.fr/admin-lou
             NEXTAUTH_SECRET=${{ secrets.NEXTAUTH_SECRET }}
+            ADMIN_USERNAME=${{ vars.ADMIN_USERNAME }}
+            ADMIN_PASSWORD=${{ secrets.ADMIN_PASSWORD }}
             ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
             WP_URL=https://autoecolemagazine.fr
             WP_USERNAME=${{ secrets.WP_USERNAME }}

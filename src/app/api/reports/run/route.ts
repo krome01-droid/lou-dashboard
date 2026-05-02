@@ -1,3 +1,6 @@
+import { getServerSession } from "next-auth"
+import { authOptions } from "@/lib/auth/options"
+
 const ALLOWED = ["daily-brief", "veille", "seo-report", "newsletter", "social-auto"] as const
 type Job = (typeof ALLOWED)[number]
 
@@ -11,6 +14,10 @@ const HANDLERS: Record<Job, () => Promise<{ GET: (req: Request) => Promise<Respo
 }
 
 export async function POST(req: Request) {
+  const session = await getServerSession(authOptions)
+  if (!session) {
+    return Response.json({ error: "Non autorisé" }, { status: 401 })
+  }
   try {
     const { job } = (await req.json()) as { job: Job }
     if (!ALLOWED.includes(job)) {

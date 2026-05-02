@@ -1,7 +1,8 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { useParams, useRouter } from "next/navigation"
+import DOMPurify from "dompurify"
 import { Header } from "@/components/layout/header"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -39,6 +40,11 @@ export default function ArticleDetailPage() {
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState("")
+
+  const safeContent = useMemo(
+    () => (article ? DOMPurify.sanitize(article.content) : ""),
+    [article],
+  )
 
   // Editable fields
   const [title, setTitle] = useState("")
@@ -168,7 +174,7 @@ export default function ArticleDetailPage() {
               <CardContent>
                 <div
                   className="prose prose-sm max-w-none"
-                  dangerouslySetInnerHTML={{ __html: article.content }}
+                  dangerouslySetInnerHTML={{ __html: safeContent }}
                 />
               </CardContent>
             </Card>

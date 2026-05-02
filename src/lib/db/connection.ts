@@ -44,7 +44,8 @@ function buildSql(
   return sql.replace(/\?/g, () => escapeSqlParam(params[i++]))
 }
 
-export { extractJson } from "@/lib/utils"
+import { extractJson } from "@/lib/utils"
+export { extractJson }
 
 async function proxyFetch<T>(body: Record<string, unknown>): Promise<T> {
   const res = await fetch(PROXY_URL(), {

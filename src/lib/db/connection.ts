@@ -44,26 +44,7 @@ function buildSql(
   return sql.replace(/\?/g, () => escapeSqlParam(params[i++]))
 }
 
-// Strip leading WordPress HTML error divs and trailing HTML comments so JSON.parse
-// doesn't fail on responses like "<div>...</div>{...}<!-- wp-comment -->" or
-// "{...} <!-- aem-mu-shutdown-test -->".
-export function extractJson(raw: string): string {
-  const start = raw.indexOf("{")
-  const startArr = raw.indexOf("[")
-  const jsonStart =
-    start === -1
-      ? startArr
-      : startArr === -1
-        ? start
-        : Math.min(start, startArr)
-  if (jsonStart < 0) return raw
-
-  const slice = raw.slice(jsonStart)
-  const closing = slice[0] === "[" ? "]" : "}"
-  const jsonEnd = slice.lastIndexOf(closing)
-  if (jsonEnd < 0) return slice
-  return slice.slice(0, jsonEnd + 1)
-}
+export { extractJson } from "@/lib/utils"
 
 async function proxyFetch<T>(body: Record<string, unknown>): Promise<T> {
   const res = await fetch(PROXY_URL(), {

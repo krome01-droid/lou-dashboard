@@ -1,5 +1,6 @@
 import { getServerSession } from "next-auth"
 import { authOptions } from "@/lib/auth/options"
+import { extractJson } from "@/lib/utils"
 
 interface ConnectionResult {
   name: string
@@ -27,7 +28,7 @@ export async function GET() {
         { headers: { Authorization: `Basic ${creds}` } },
       )
       if (res.ok) {
-        const posts = await res.json()
+        const posts = JSON.parse(extractJson(await res.text()))
         results.push({
           name: "wordpress",
           status: "ok",

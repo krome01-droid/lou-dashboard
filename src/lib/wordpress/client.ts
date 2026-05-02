@@ -1,3 +1,5 @@
+import { extractJson } from "@/lib/utils"
+
 const WP_URL = () => process.env.WP_URL!
 const WP_AUTH = () =>
   Buffer.from(`${process.env.WP_USERNAME}:${process.env.WP_APP_PASSWORD}`).toString("base64")
@@ -16,7 +18,8 @@ async function wpFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
     throw new Error(`WordPress API ${res.status}: ${text}`)
   }
 
-  return res.json()
+  const raw = await res.text()
+  return JSON.parse(extractJson(raw)) as T
 }
 
 async function wpFetchWithHeaders<T>(
@@ -31,8 +34,9 @@ async function wpFetchWithHeaders<T>(
     throw new Error(`WordPress API ${res.status}: ${text}`)
   }
 
+  const raw = await res.text()
   return {
-    data: await res.json(),
+    data: JSON.parse(extractJson(raw)) as T,
     totalPages: Number(res.headers.get("X-WP-TotalPages") ?? 1),
     totalItems: Number(res.headers.get("X-WP-Total") ?? 0),
   }
@@ -133,7 +137,7 @@ export async function uploadMedia(
     })
 
     if (!res.ok) return null
-    const data = (await res.json()) as { id: number }
+    const data = JSON.parse(extractJson(await res.text())) as { id: number }
     return data.id
   } catch {
     return null
@@ -149,8 +153,44 @@ export async function getMediaUrl(mediaId: number): Promise<string | null> {
       headers: { Authorization: `Basic ${WP_AUTH()}` },
     })
     if (!res.ok) return null
-    const data = (await res.json()) as { source_url?: string }
+    const data = JSON.parse(extractJson(await res.text())) as { source_url?: string }
     return data.source_url ?? null
+  } catch {
+    return null
+  }
+}
+
+export interface MediaSizes {
+  full: string
+  large: string | null        // ~1024px wide — image principale newsletter
+  medium_large: string | null // ~768px wide
+  medium: string | null       // ~300px wide
+  thumbnail: string | null    // 150×150 — vignettes newsletter
+}
+
+/**
+ * Fetch all registered WordPress thumbnail sizes for a media item.
+ * Use `large` for newsletter hero images and `thumbnail` for article thumbnails.
+ * Full-size images (2–5 MB) will break in Gmail — never use them in emails.
+ */
+export async function getMediaSizes(mediaId: number): Promise<MediaSizes | null> {
+  try {
+    const res = await fetch(`${WP_URL()}/wp-json/wp/v2/media/${mediaId}`, {
+      headers: { Authorization: `Basic ${WP_AUTH()}` },
+    })
+    if (!res.ok) return null
+    const data = JSON.parse(extractJson(await res.text())) as {
+      source_url?: string
+      media_details?: { sizes?: Record<string, { source_url?: string }> }
+    }
+    const sizes = data.media_details?.sizes ?? {}
+    return {
+      full: data.source_url ?? "",
+      large: sizes.large?.source_url ?? null,
+      medium_large: sizes.medium_large?.source_url ?? null,
+      medium: sizes.medium?.source_url ?? null,
+      thumbnail: sizes.thumbnail?.source_url ?? null,
+    }
   } catch {
     return null
   }

@@ -76,10 +76,10 @@ const EMAIL_TEMPLATES = [
 export default function NewsletterPage() {
   const [subject, setSubject] = useState("")
   const [htmlContent, setHtmlContent] = useState("")
-  const safeHtmlPreview = useMemo(
-    () => DOMPurify.sanitize(htmlContent.replace(/\{\{contact\.first_name\}\}/g, "Laurent")),
-    [htmlContent],
-  )
+  const safeHtmlPreview = useMemo(() => {
+    if (typeof window === "undefined") return ""
+    return DOMPurify.sanitize(htmlContent.replace(/\{\{contact\.first_name\}\}/g, "Laurent"))
+  }, [htmlContent])
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<SendResult | null>(null)
   const [showPreview, setShowPreview] = useState(false)

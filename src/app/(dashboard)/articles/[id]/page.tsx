@@ -41,10 +41,10 @@ export default function ArticleDetailPage() {
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState("")
 
-  const safeContent = useMemo(
-    () => (article ? DOMPurify.sanitize(article.content) : ""),
-    [article],
-  )
+  const safeContent = useMemo(() => {
+    if (typeof window === "undefined") return ""
+    return article ? DOMPurify.sanitize(article.content) : ""
+  }, [article])
 
   // Editable fields
   const [title, setTitle] = useState("")

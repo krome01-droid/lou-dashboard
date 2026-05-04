@@ -126,11 +126,31 @@ export default function ReportsPage() {
       })
       const json = await res.json()
       const ok = json.ok === true
-      const message = ok
-        ? "Exécution réussie"
-        : typeof json.body === "object" && json.body && "error" in json.body
-          ? String((json.body as { error?: string }).error)
-          : `Erreur ${json.status ?? ""}`
+      const body = json.body as Record<string, unknown> | string | undefined
+
+      let message: string
+      if (!ok) {
+        message =
+          typeof body === "object" && body && "error" in body
+            ? String((body as { error?: string }).error)
+            : `Erreur ${json.status ?? ""}`
+      } else if (typeof body === "object" && body) {
+        const items = body.items_found ?? body.items
+        const saved = body.saved_to_log ?? body.saved
+        const alerts = body.alerts
+        const note = body.message
+        const parts: string[] = []
+        if (typeof items === "number") parts.push(`${items} actus`)
+        if (typeof alerts === "number") parts.push(`${alerts} alertes`)
+        if (typeof saved === "number") parts.push(`${saved} enregistrées`)
+        message = parts.length
+          ? `Exécution réussie — ${parts.join(", ")}`
+          : typeof note === "string"
+            ? `Exécution réussie — ${note}`
+            : "Exécution réussie"
+      } else {
+        message = "Exécution réussie"
+      }
       setLastRun({ job, ok, message })
       if (ok) await fetchData()
     } catch (err) {

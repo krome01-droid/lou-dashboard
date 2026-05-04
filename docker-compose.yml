@@ -21,6 +21,10 @@ services:
       - NEXTAUTH_URL=${NEXTAUTH_URL}
       - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
 
+      # Admin local (fallback login sans WordPress)
+      - ADMIN_USERNAME=${ADMIN_USERNAME}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+
       # Anthropic
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
 

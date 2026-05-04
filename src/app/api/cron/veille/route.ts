@@ -2,8 +2,9 @@ import Anthropic from "@anthropic-ai/sdk"
 import { execute } from "@/lib/db/connection"
 
 const RSS_FEEDS = [
-  "https://www.securite-routiere.gouv.fr/les-medias/nos-publications/feed",
-  "https://www.service-public.fr/particuliers/vosdroits/rss/N19473",
+  "https://www.securite-routiere.gouv.fr/rss.xml",
+  "https://www.auto-moto.com/feed",
+  "https://www.lemonde.fr/securite-routiere/rss_full.xml",
 ]
 
 interface FeedItem {
@@ -49,8 +50,8 @@ export async function GET(req: Request) {
     const feedResults = await Promise.all(RSS_FEEDS.map(fetchRSS))
     const allItems = feedResults.flat()
 
-    // Filter items from last 48h
-    const cutoff = Date.now() - 48 * 60 * 60 * 1000
+    // Filter items from last 7 days (gov feeds are infrequent)
+    const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000
     const recentItems = allItems.filter((item) => {
       if (!item.pubDate) return true // include if no date
       const itemDate = new Date(item.pubDate).getTime()

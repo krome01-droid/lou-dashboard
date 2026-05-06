@@ -1,6 +1,60 @@
 import Anthropic from "@anthropic-ai/sdk"
-import { listPosts } from "@/lib/wordpress/client"
+import { listAllPosts, listAllPages, type WPPost } from "@/lib/wordpress/client"
 import { execute, query } from "@/lib/db/connection"
+
+interface LinkStats {
+  slug: string
+  title: string
+  type: "post" | "page"
+  date: string
+  wordCount: number
+  outgoingInternal: number
+  incomingInternal: number
+}
+
+function analyzeContent(items: { post: WPPost; type: "post" | "page" }[], siteHost: string): LinkStats[] {
+  // Build slug → incoming-count map by parsing every item's HTML for hrefs targeting siteHost
+  const incomingBySlug = new Map<string, number>()
+  const stats: Omit<LinkStats, "incomingInternal">[] = []
+
+  const hrefRe = /href=["']([^"']+)["']/gi
+
+  for (const { post, type } of items) {
+    const html = post.content?.rendered ?? ""
+    const text = html.replace(/<[^>]+>/g, " ")
+    const wordCount = text.split(/\s+/).filter(Boolean).length
+
+    let outgoingInternal = 0
+    let m: RegExpExecArray | null
+    while ((m = hrefRe.exec(html)) !== null) {
+      const href = m[1]
+      if (!href.includes(siteHost)) continue
+      outgoingInternal++
+      // Extract slug from URL path (last non-empty segment)
+      try {
+        const u = new URL(href, `https://${siteHost}`)
+        const segments = u.pathname.split("/").filter(Boolean)
+        const targetSlug = segments[segments.length - 1]
+        if (targetSlug) {
+          incomingBySlug.set(targetSlug, (incomingBySlug.get(targetSlug) ?? 0) + 1)
+        }
+      } catch {
+        // ignore malformed URLs
+      }
+    }
+
+    stats.push({
+      slug: post.slug,
+      title: post.title.rendered,
+      type,
+      date: post.date,
+      wordCount,
+      outgoingInternal,
+    })
+  }
+
+  return stats.map((s) => ({ ...s, incomingInternal: incomingBySlug.get(s.slug) ?? 0 }))
+}
 
 export async function GET(req: Request) {
   if (req.headers.get("Authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -17,24 +71,56 @@ export async function GET(req: Request) {
       timeZone: "Europe/Paris",
     })
 
-    // Gather site data in parallel
-    const [posts, recentConversations, seoReports] = await Promise.all([
-      listPosts({ per_page: 50, status: "publish" }).catch(() => []),
-      query<{ title: string; created_at: string }>(
-        `SELECT title, created_at FROM wp_lou_conversations ORDER BY created_at DESC LIMIT 5`,
+    const siteHost = (process.env.WP_URL ?? "").replace(/^https?:\/\//, "").replace(/\/$/, "")
+
+    // Full inventory: all posts + all pages, paginated
+    const [posts, pages, recentBriefs, seoReports] = await Promise.all([
+      listAllPosts().catch(() => [] as WPPost[]),
+      listAllPages().catch(() => [] as WPPost[]),
+      query<{ content_markdown: string; meta_json: string; created_at: string }>(
+        `SELECT content_markdown, meta_json, created_at
+         FROM wp_lou_content_log
+         WHERE type = 'brief' AND created_by = 'lou-cron'
+         ORDER BY created_at DESC LIMIT 5`,
       ).catch(() => []),
-      query<{ summary: string; data_json: string; created_at: string }>(
-        `SELECT summary, data_json, created_at FROM wp_lou_seo_reports ORDER BY created_at DESC LIMIT 1`,
+      query<{ data_json: string; created_at: string }>(
+        `SELECT data_json, created_at FROM wp_lou_seo_reports ORDER BY created_at DESC LIMIT 1`,
       ).catch(() => []),
     ])
 
-    // Recent articles (last 7 days)
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
-    const recentPosts = posts.filter((p) => p.date >= sevenDaysAgo)
-    const totalPosts = posts.length
+    // Compute link/word metrics across the whole site
+    const allItems = [
+      ...posts.map((p) => ({ post: p, type: "post" as const })),
+      ...pages.map((p) => ({ post: p, type: "page" as const })),
+    ]
+    const stats = analyzeContent(allItems, siteHost)
 
-    // Compute simple SEO score from article count and frequency
-    const avgPerWeek = recentPosts.length
+    // Recent (last 7 days)
+    const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+    const recentStats = stats.filter((s) => new Date(s.date) >= weekAgo)
+
+    // Find weak spots
+    const orphans = stats.filter((s) => s.incomingInternal === 0).slice(0, 20)
+    const linkPoor = stats
+      .filter((s) => s.outgoingInternal < 3)
+      .sort((a, b) => b.wordCount - a.wordCount)
+      .slice(0, 15)
+    const thin = stats.filter((s) => s.wordCount < 400).slice(0, 15)
+    const recentOrphans = recentStats.filter((s) => s.incomingInternal === 0)
+
+    // Previous brief actions (avoid repeating verbatim)
+    const previousActions: string[] = []
+    for (const b of recentBriefs) {
+      try {
+        const meta = JSON.parse(b.meta_json) as { actions?: { title: string }[] }
+        for (const a of meta.actions ?? []) previousActions.push(a.title)
+      } catch {
+        // fall back to scanning markdown
+        const matches = b.content_markdown.match(/\*\*([^*]+)\*\*/g) ?? []
+        previousActions.push(...matches.map((m) => m.replace(/\*\*/g, "").trim()))
+      }
+    }
+
     const lastSeoData = seoReports[0]
       ? (() => {
           try {
@@ -45,51 +131,58 @@ export async function GET(req: Request) {
         })()
       : null
 
-    const seoScore = lastSeoData?.score ?? Math.min(100, 40 + totalPosts * 0.3 + avgPerWeek * 5)
+    const totalPosts = posts.length
+    const totalPages = pages.length
+    const seoScore =
+      lastSeoData?.score ?? Math.min(100, 40 + totalPosts * 0.3 + recentStats.length * 5)
 
-    // Build context for Claude
-    const recentPostsList = recentPosts
-      .slice(0, 10)
-      .map((p) => `- "${p.title.rendered}"`)
-      .join("\n")
+    const fmt = (s: LinkStats) =>
+      `${s.slug} (${s.type}, ${s.wordCount}w, in:${s.incomingInternal} out:${s.outgoingInternal})`
 
-    const allPostSlugs = posts
-      .slice(0, 30)
-      .map((p) => p.slug)
-      .join(", ")
-
-    const prompt = `Tu es LOU, l'agent IA d'AutoEcoleMagazine.fr — le premier comparateur de 9814 auto-écoles en France.
+    const prompt = `Tu es LOU, l'agent IA d'AutoEcoleMagazine.fr — comparateur d'auto-écoles en France.
 
 Date du jour : ${today}
 
-## Données du site
+## Inventaire complet (vérifié, pas une estimation)
 
-**Articles publiés :** ${totalPosts} au total
-**Publiés cette semaine :** ${recentPosts.length}
-**Score SEO estimé :** ${Math.round(seoScore)}/100
+- Articles publiés : ${totalPosts}
+- Pages publiées : ${totalPages}
+- Publiés cette semaine : ${recentStats.length}
+- Score SEO : ${Math.round(seoScore)}/100
 
-**Articles récents :**
-${recentPostsList || "Aucun article cette semaine"}
+## Maillage interne — données réelles
 
-**Slugs couverts (échantillon) :** ${allPostSlugs}
+**Pages orphelines (0 lien entrant) — top 20 :**
+${orphans.map(fmt).join("\n") || "aucune"}
 
-## Mission du brief matinal
+**Pages récentes orphelines (cette semaine, 0 lien entrant) :**
+${recentOrphans.map(fmt).join("\n") || "aucune"}
 
-Génère un rapport quotidien concis et actionnable pour Laurent (gestionnaire du site). Ce rapport doit :
+**Pages pauvres en liens sortants (<3) — top 15 par taille :**
+${linkPoor.map(fmt).join("\n") || "aucune"}
 
-1. **État du site** — 2-3 phrases sur la santé actuelle du contenu et du SEO
-2. **Opportunités du jour** — 3 actions concrètes prioritaires (avec impact estimé : fort/moyen/faible)
-3. **Idée d'article** — 1 sujet à fort potentiel SEO, avec titre proposé et mots-clés cibles
-4. **Alerte** — 1 point de vigilance ou risque à surveiller
-5. **Objectif de la semaine** — 1 objectif mesurable à atteindre avant vendredi
+**Pages thin content (<400 mots) — top 15 :**
+${thin.map(fmt).join("\n") || "aucune"}
 
-Sois direct, concret, sans blabla. Pense comme un consultant SEO/content qui facture 500€/h.
+## Briefs précédents — actions DÉJÀ proposées (NE PAS RÉPÉTER)
 
-Réponds en JSON :
+${previousActions.length ? previousActions.map((a) => `- ${a}`).join("\n") : "aucun brief précédent"}
+
+## Mission
+
+Génère le brief du jour pour Laurent. Règles strictes :
+
+1. **Cite des slugs précis** issus de l'inventaire ci-dessus. Pas de généralités.
+2. **N'invente aucune métrique** non listée ici.
+3. **Ne propose PAS** d'action déjà listée dans "Briefs précédents". Soit tu proposes une suite/évolution explicite ("relancer X car…"), soit du neuf.
+4. Si l'inventaire montre que le site est sain (peu d'orphelins, etc.), dis-le et propose des actions de croissance, pas de correction.
+5. Direct, concret, sans blabla.
+
+Réponds en JSON strict :
 {
   "date": string,
   "site_status": string,
-  "actions": [{ "title": string, "description": string, "impact": "fort"|"moyen"|"faible", "time_needed": string }],
+  "actions": [{ "title": string, "description": string, "impact": "fort"|"moyen"|"faible", "time_needed": string, "target_slugs": string[] }],
   "article_idea": { "title": string, "keywords": string[], "why": string, "estimated_traffic": string },
   "alert": string,
   "weekly_goal": string,
@@ -98,38 +191,54 @@ Réponds en JSON :
 
     const response = await client.messages.create({
       model: "claude-sonnet-4-6",
-      max_tokens: 2000,
+      max_tokens: 3000,
       messages: [{ role: "user", content: prompt }],
     })
 
     const responseText = response.content[0].type === "text" ? response.content[0].text : ""
 
-    let brief: {
+    const jsonMatch = responseText.match(/\{[\s\S]*\}/)
+    if (!jsonMatch) throw new Error("Pas de JSON dans la réponse")
+    const brief = JSON.parse(jsonMatch[0]) as {
       date: string
       site_status: string
-      actions: { title: string; description: string; impact: string; time_needed: string }[]
+      actions: {
+        title: string
+        description: string
+        impact: string
+        time_needed: string
+        target_slugs?: string[]
+      }[]
       article_idea: { title: string; keywords: string[]; why: string; estimated_traffic: string }
       alert: string
       weekly_goal: string
       score: number
     }
 
-    const jsonMatch = responseText.match(/\{[\s\S]*\}/)
-    if (!jsonMatch) throw new Error("Pas de JSON dans la réponse")
-    brief = JSON.parse(jsonMatch[0])
-
-    // Save to content_log as daily brief
     await execute(
       `INSERT INTO wp_lou_content_log (title, type, status, content_markdown, meta_json, created_by)
        VALUES (?, 'brief', 'published', ?, ?, 'lou-cron')`,
       [
         `Brief matinal — ${today}`,
-        `## ${today}\n\n**État du site :** ${brief.site_status}\n\n**Actions prioritaires :**\n${brief.actions.map((a) => `- [${a.impact.toUpperCase()}] **${a.title}** (${a.time_needed}): ${a.description}`).join("\n")}\n\n**Idée d'article :** ${brief.article_idea.title}\nMots-clés : ${brief.article_idea.keywords.join(", ")}\n${brief.article_idea.why}\n\n**Alerte :** ${brief.alert}\n\n**Objectif semaine :** ${brief.weekly_goal}`,
+        `## ${today}\n\n**État du site :** ${brief.site_status}\n\n**Actions prioritaires :**\n${brief.actions
+          .map(
+            (a) =>
+              `- [${a.impact.toUpperCase()}] **${a.title}** (${a.time_needed}): ${a.description}${a.target_slugs?.length ? ` — cibles : ${a.target_slugs.join(", ")}` : ""}`,
+          )
+          .join("\n")}\n\n**Idée d'article :** ${brief.article_idea.title}\nMots-clés : ${brief.article_idea.keywords.join(", ")}\n${brief.article_idea.why}\n\n**Alerte :** ${brief.alert}\n\n**Objectif semaine :** ${brief.weekly_goal}`,
         JSON.stringify({
           source: "cron_daily_brief",
           score: brief.score,
           article_idea: brief.article_idea,
-          actions_count: brief.actions.length,
+          actions: brief.actions,
+          inventory: {
+            posts: totalPosts,
+            pages: totalPages,
+            orphans: orphans.length,
+            recent_orphans: recentOrphans.length,
+            link_poor: linkPoor.length,
+            thin: thin.length,
+          },
         }),
       ],
     )
@@ -143,6 +252,13 @@ Réponds en JSON :
       article_idea: brief.article_idea,
       alert: brief.alert,
       weekly_goal: brief.weekly_goal,
+      inventory: {
+        posts: totalPosts,
+        pages: totalPages,
+        recent: recentStats.length,
+        orphans: orphans.length,
+        recent_orphans: recentOrphans.length,
+      },
     })
   } catch (err) {
     return Response.json(

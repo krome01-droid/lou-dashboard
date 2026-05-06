@@ -102,6 +102,34 @@ export async function listPosts(params: {
   return wpFetch<WPPost[]>(`/posts?${qs}`)
 }
 
+async function fetchAllPaginated(endpoint: "posts" | "pages", status = "publish"): Promise<WPPost[]> {
+  const all: WPPost[] = []
+  const perPage = 100
+  let page = 1
+  let totalPages = 1
+  do {
+    const qs = new URLSearchParams({
+      per_page: String(perPage),
+      page: String(page),
+      status,
+      _fields: "id,title,content,slug,status,link,date,categories,tags",
+    })
+    const { data, totalPages: tp } = await wpFetchWithHeaders<WPPost[]>(`/${endpoint}?${qs}`)
+    all.push(...data)
+    totalPages = tp
+    page++
+  } while (page <= totalPages)
+  return all
+}
+
+export async function listAllPosts(status = "publish"): Promise<WPPost[]> {
+  return fetchAllPaginated("posts", status)
+}
+
+export async function listAllPages(status = "publish"): Promise<WPPost[]> {
+  return fetchAllPaginated("pages", status)
+}
+
 // --- Media ---
 
 export async function uploadMedia(

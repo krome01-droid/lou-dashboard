@@ -56,8 +56,6 @@ function analyzeContent(items: { post: WPPost; type: "post" | "page" }[], siteHo
   return stats.map((s) => ({ ...s, incomingInternal: incomingBySlug.get(s.slug) ?? 0 }))
 }
 
-const MAX_LIST = 25
-
 export async function GET(req: Request) {
   if (req.headers.get("Authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
     return Response.json({ error: "Unauthorized" }, { status: 401 })
@@ -104,18 +102,12 @@ export async function GET(req: Request) {
     const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
     const recentStats = stats.filter((s) => new Date(s.date) >= weekAgo)
 
-    // Find weak spots — capped at MAX_LIST to keep prompt size bounded as the site grows
-    const orphansAll = stats.filter((s) => s.incomingInternal === 0)
-    const linkPoorAll = stats
+    const orphans = stats.filter((s) => s.incomingInternal === 0)
+    const linkPoor = stats
       .filter((s) => s.outgoingInternal < 3)
       .sort((a, b) => b.wordCount - a.wordCount)
-    const thinAll = stats.filter((s) => s.wordCount < 400)
-    const recentOrphansAll = recentStats.filter((s) => s.incomingInternal === 0)
-
-    const orphans = orphansAll.slice(0, MAX_LIST)
-    const linkPoor = linkPoorAll.slice(0, MAX_LIST)
-    const thin = thinAll.slice(0, MAX_LIST)
-    const recentOrphans = recentOrphansAll.slice(0, MAX_LIST)
+    const thin = stats.filter((s) => s.wordCount < 400)
+    const recentOrphans = recentStats.filter((s) => s.incomingInternal === 0)
 
     // Previous brief actions (avoid repeating verbatim)
     const previousActions: string[] = []
@@ -161,16 +153,16 @@ Date du jour : ${today}
 
 ## Maillage interne — données réelles
 
-**Pages orphelines (0 lien entrant) — ${orphans.length}/${orphansAll.length} affichées :**
+**Pages orphelines (0 lien entrant) — ${orphans.length} :**
 ${orphans.map(fmt).join("\n") || "aucune"}
 
-**Pages récentes orphelines (cette semaine, 0 lien entrant) — ${recentOrphans.length}/${recentOrphansAll.length} :**
+**Pages récentes orphelines (cette semaine, 0 lien entrant) — ${recentOrphans.length} :**
 ${recentOrphans.map(fmt).join("\n") || "aucune"}
 
-**Pages pauvres en liens sortants (<3) — ${linkPoor.length}/${linkPoorAll.length}, triées par taille :**
+**Pages pauvres en liens sortants (<3) — ${linkPoor.length}, triées par taille :**
 ${linkPoor.map(fmt).join("\n") || "aucune"}
 
-**Pages thin content (<400 mots) — ${thin.length}/${thinAll.length} :**
+**Pages thin content (<400 mots) — ${thin.length} :**
 ${thin.map(fmt).join("\n") || "aucune"}
 
 ## Briefs précédents — actions DÉJÀ proposées (NE PAS RÉPÉTER)
@@ -266,10 +258,10 @@ Réponds en JSON strict :
         posts: totalPosts,
         pages: totalPages,
         recent: recentStats.length,
-        orphans: orphansAll.length,
-        recent_orphans: recentOrphansAll.length,
-        link_poor: linkPoorAll.length,
-        thin: thinAll.length,
+        orphans: orphans.length,
+        recent_orphans: recentOrphans.length,
+        link_poor: linkPoor.length,
+        thin: thin.length,
       },
     })
   } catch (err) {

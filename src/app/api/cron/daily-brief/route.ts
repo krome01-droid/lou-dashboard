@@ -56,10 +56,15 @@ function analyzeContent(items: { post: WPPost; type: "post" | "page" }[], siteHo
   return stats.map((s) => ({ ...s, incomingInternal: incomingBySlug.get(s.slug) ?? 0 }))
 }
 
+const MAX_LIST = 25
+
 export async function GET(req: Request) {
   if (req.headers.get("Authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
     return Response.json({ error: "Unauthorized" }, { status: 401 })
   }
+
+  const url = new URL(req.url)
+  const dryRun = url.searchParams.get("dry_run") === "1"
 
   try {
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
@@ -99,14 +104,18 @@ export async function GET(req: Request) {
     const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
     const recentStats = stats.filter((s) => new Date(s.date) >= weekAgo)
 
-    // Find weak spots
-    const orphans = stats.filter((s) => s.incomingInternal === 0).slice(0, 20)
-    const linkPoor = stats
+    // Find weak spots — capped at MAX_LIST to keep prompt size bounded as the site grows
+    const orphansAll = stats.filter((s) => s.incomingInternal === 0)
+    const linkPoorAll = stats
       .filter((s) => s.outgoingInternal < 3)
       .sort((a, b) => b.wordCount - a.wordCount)
-      .slice(0, 15)
-    const thin = stats.filter((s) => s.wordCount < 400).slice(0, 15)
-    const recentOrphans = recentStats.filter((s) => s.incomingInternal === 0)
+    const thinAll = stats.filter((s) => s.wordCount < 400)
+    const recentOrphansAll = recentStats.filter((s) => s.incomingInternal === 0)
+
+    const orphans = orphansAll.slice(0, MAX_LIST)
+    const linkPoor = linkPoorAll.slice(0, MAX_LIST)
+    const thin = thinAll.slice(0, MAX_LIST)
+    const recentOrphans = recentOrphansAll.slice(0, MAX_LIST)
 
     // Previous brief actions (avoid repeating verbatim)
     const previousActions: string[] = []
@@ -152,16 +161,16 @@ Date du jour : ${today}
 
 ## Maillage interne — données réelles
 
-**Pages orphelines (0 lien entrant) — top 20 :**
+**Pages orphelines (0 lien entrant) — ${orphans.length}/${orphansAll.length} affichées :**
 ${orphans.map(fmt).join("\n") || "aucune"}
 
-**Pages récentes orphelines (cette semaine, 0 lien entrant) :**
+**Pages récentes orphelines (cette semaine, 0 lien entrant) — ${recentOrphans.length}/${recentOrphansAll.length} :**
 ${recentOrphans.map(fmt).join("\n") || "aucune"}
 
-**Pages pauvres en liens sortants (<3) — top 15 par taille :**
+**Pages pauvres en liens sortants (<3) — ${linkPoor.length}/${linkPoorAll.length}, triées par taille :**
 ${linkPoor.map(fmt).join("\n") || "aucune"}
 
-**Pages thin content (<400 mots) — top 15 :**
+**Pages thin content (<400 mots) — ${thin.length}/${thinAll.length} :**
 ${thin.map(fmt).join("\n") || "aucune"}
 
 ## Briefs précédents — actions DÉJÀ proposées (NE PAS RÉPÉTER)
@@ -215,7 +224,7 @@ Réponds en JSON strict :
       score: number
     }
 
-    await execute(
+    if (!dryRun) await execute(
       `INSERT INTO wp_lou_content_log (title, type, status, content_markdown, meta_json, created_by)
        VALUES (?, 'brief', 'published', ?, ?, 'lou-cron')`,
       [
@@ -245,6 +254,7 @@ Réponds en JSON strict :
 
     return Response.json({
       status: "ok",
+      dry_run: dryRun,
       date: today,
       score: brief.score,
       site_status: brief.site_status,
@@ -256,8 +266,10 @@ Réponds en JSON strict :
         posts: totalPosts,
         pages: totalPages,
         recent: recentStats.length,
-        orphans: orphans.length,
-        recent_orphans: recentOrphans.length,
+        orphans: orphansAll.length,
+        recent_orphans: recentOrphansAll.length,
+        link_poor: linkPoorAll.length,
+        thin: thinAll.length,
       },
     })
   } catch (err) {

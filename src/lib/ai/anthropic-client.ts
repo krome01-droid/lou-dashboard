@@ -7,6 +7,38 @@ import type { StreamEvent, FileAttachment } from "./types"
 const MODEL = "claude-sonnet-4-6"
 const MAX_TOKENS = 8192
 const MAX_TOOL_ROUNDS = 10
+const MAX_RETRIES = 4
+const BASE_RETRY_DELAY_MS = 1000
+
+function isRetryableError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false
+  const e = err as { status?: number; error?: { type?: string }; type?: string }
+  const status = e.status
+  const type = e.error?.type ?? e.type
+  if (type === "overloaded_error" || type === "rate_limit_error" || type === "api_error") return true
+  if (typeof status === "number" && (status === 429 || status === 529 || status >= 500)) return true
+  return false
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function friendlyErrorMessage(err: unknown): string {
+  if (err && typeof err === "object") {
+    const e = err as { error?: { type?: string; message?: string }; message?: string }
+    const type = e.error?.type
+    if (type === "overloaded_error") {
+      return "L'IA est temporairement surchargée. Réessaie dans quelques instants."
+    }
+    if (type === "rate_limit_error") {
+      return "Limite de requêtes atteinte. Patiente un instant puis réessaie."
+    }
+    if (e.error?.message) return e.error.message
+    if (e.message) return e.message
+  }
+  return "Erreur IA inconnue"
+}
 
 interface ChatMessage {
   role: "user" | "assistant"
@@ -105,27 +137,46 @@ export function streamChatWithTools(
         })
 
         for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-          // Use stream() so text deltas reach the client token-by-token
-          const messageStream = client.messages.stream({
-            model: MODEL,
-            max_tokens: MAX_TOKENS,
-            system: LOU_SYSTEM_PROMPT,
-            messages: currentMessages,
-            tools: LOU_TOOLS,
-          })
+          // Retry the stream on transient overload/rate-limit/5xx errors.
+          // We only retry before any text_delta has been sent for this round —
+          // otherwise we'd duplicate output. If failure happens mid-stream, we surface it.
+          let response: Anthropic.Message | null = null
+          let attempt = 0
+          while (true) {
+            let deltasEmittedThisAttempt = false
+            try {
+              const messageStream = client.messages.stream({
+                model: MODEL,
+                max_tokens: MAX_TOKENS,
+                system: LOU_SYSTEM_PROMPT,
+                messages: currentMessages,
+                tools: LOU_TOOLS,
+              })
 
-          // Forward text deltas in real-time as they arrive from Anthropic
-          for await (const event of messageStream) {
-            if (
-              event.type === "content_block_delta" &&
-              event.delta.type === "text_delta"
-            ) {
-              send(controller, { type: "text_delta", content: event.delta.text })
+              for await (const event of messageStream) {
+                if (
+                  event.type === "content_block_delta" &&
+                  event.delta.type === "text_delta"
+                ) {
+                  deltasEmittedThisAttempt = true
+                  send(controller, { type: "text_delta", content: event.delta.text })
+                }
+              }
+
+              response = await messageStream.finalMessage()
+              break
+            } catch (err) {
+              if (!deltasEmittedThisAttempt && isRetryableError(err) && attempt < MAX_RETRIES) {
+                const delay = BASE_RETRY_DELAY_MS * Math.pow(2, attempt) + Math.floor(Math.random() * 250)
+                attempt++
+                await sleep(delay)
+                continue
+              }
+              throw err
             }
           }
 
-          // Collect the final assembled message (tool inputs are now complete)
-          const response = await messageStream.finalMessage()
+          if (!response) break
 
           // Process tool use blocks, execute tools once and store results
           const toolUseBlocks = response.content.filter(
@@ -176,7 +227,7 @@ export function streamChatWithTools(
       } catch (err) {
         send(controller, {
           type: "error",
-          error: err instanceof Error ? err.message : "Erreur IA inconnue",
+          error: friendlyErrorMessage(err),
         })
       } finally {
         controller.close()

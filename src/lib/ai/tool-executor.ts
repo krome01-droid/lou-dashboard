@@ -1,6 +1,6 @@
 import type { ToolCallResult } from "./types"
 import { marked } from "marked"
-import { listPosts, createPost, updatePost, findOrCreateCategory, getMediaUrl, uploadMedia, getAllPostsAudit } from "@/lib/wordpress/client"
+import { listPosts, createPost, updatePost, findOrCreateCategory, getMediaUrl, getMediaSizes, uploadMedia, getAllPostsAudit } from "@/lib/wordpress/client"
 import { scheduleSocialPost } from "@/lib/ghl/social-planner"
 import { sendPreviewEmail, sendBulkEmail } from "@/lib/ghl/email"
 import { query, execute } from "@/lib/db/connection"
@@ -751,6 +751,11 @@ const toolHandlers: Record<string, ToolHandler> = {
         }
       }
 
+      // Fetch thumbnail URLs — full-size images break in Gmail (2–5 MB proxy timeout)
+      const sizes = await getMediaSizes(mediaId)
+      const emailHeroUrl = sizes?.large ?? sizes?.medium_large ?? sizes?.full ?? result.url
+      const emailThumbnailUrl = sizes?.thumbnail ?? null
+
       // Si post_id fourni → rattacher automatiquement comme featured image
       if (postId) {
         try {
@@ -762,7 +767,9 @@ const toolHandlers: Record<string, ToolHandler> = {
             filename,
             featured_image_set: true,
             post_id: postId,
-            note: `✅ Image uploadée (media_id: ${mediaId}) et définie comme image à la une de l'article ${postId}.`,
+            email_hero_url: emailHeroUrl,
+            email_thumbnail_url: emailThumbnailUrl,
+            note: `✅ Image uploadée (media_id: ${mediaId}) et définie comme image à la une de l'article ${postId}. Pour les newsletters : utilise email_hero_url pour l'image principale et email_thumbnail_url pour les vignettes.`,
           }
         } catch {
           return {
@@ -771,6 +778,8 @@ const toolHandlers: Record<string, ToolHandler> = {
             wordpress_media_id: mediaId,
             filename,
             featured_image_set: false,
+            email_hero_url: emailHeroUrl,
+            email_thumbnail_url: emailThumbnailUrl,
             note: `Image uploadée (media_id: ${mediaId}) mais le rattachement à l'article ${postId} a échoué. Utilise update_article avec featured_media: ${mediaId}.`,
           }
         }
@@ -781,7 +790,9 @@ const toolHandlers: Record<string, ToolHandler> = {
         image_url: result.url,
         wordpress_media_id: mediaId,
         filename,
-        note: `Image uploadée sur WordPress (media_id: ${mediaId}). Pour la définir comme image à la une : update_article(post_id, featured_media: ${mediaId}).`,
+        email_hero_url: emailHeroUrl,
+        email_thumbnail_url: emailThumbnailUrl,
+        note: `Image uploadée sur WordPress (media_id: ${mediaId}). NEWSLETTER : utilise email_hero_url pour l'image principale et email_thumbnail_url pour les vignettes — jamais image_url (trop lourd pour Gmail).`,
       }
     }
 

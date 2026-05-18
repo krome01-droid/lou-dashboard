@@ -168,7 +168,6 @@ export const EMAIL_TEMPLATES: Record<TemplateName, EmailTemplate> = {
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Newsletter — Auto-Ecole Magazine</title>
-    <!--[if !mso]><!-- -->
     <style type="text/css">
         #outlook a { padding: 0; }
         body { margin: 0; padding: 0; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
@@ -184,7 +183,6 @@ export const EMAIL_TEMPLATES: Record<TemplateName, EmailTemplate> = {
             .article-thumb { width: 80px !important; height: 80px !important; }
         }
     </style>
-    <!--<![endif]-->
     <!--[if mso]>
     <xml>
         <o:OfficeDocumentSettings>
@@ -251,7 +249,7 @@ export const EMAIL_TEMPLATES: Record<TemplateName, EmailTemplate> = {
                             <v:fill type="frame" src="{{article_1_image_url}}" />
                             </v:rect>
                             <![endif]-->
-                            <!--[if !mso]><!-- -->
+                            <!--[if !mso]><!-->
                             <img src="{{article_1_image_url}}" alt="{{article_1_image_alt}}" width="520" style="width: 100%; max-width: 520px; height: auto; border-radius: 8px 8px 0 0; display: block;">
                             <!--<![endif]-->
                         </a>
@@ -282,7 +280,7 @@ export const EMAIL_TEMPLATES: Record<TemplateName, EmailTemplate> = {
                                                 <center style="color:#ffffff;font-family:Arial,sans-serif;font-size:14px;font-weight:bold;">LIRE L'ARTICLE</center>
                                                 </v:roundrect>
                                                 <![endif]-->
-                                                <!--[if !mso]><!-- -->
+                                                <!--[if !mso]><!-->
                                                 <a href="{{article_1_url}}" target="_blank" style="font-size: 14px; font-family: Arial, sans-serif; color: #ffffff; text-decoration: none; border-radius: 6px; padding: 12px 28px; display: inline-block; font-weight: bold; background-color: #e31e44;">LIRE L'ARTICLE</a>
                                                 <!--<![endif]-->
                                             </td>

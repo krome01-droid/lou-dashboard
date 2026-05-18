@@ -265,6 +265,20 @@ Quand update_article est utilisé :
 - **Ne jamais générer une image sans la rattacher à son article.** Si tu as le post_id, utilise-le dans generate_image. Toujours.
 - **Post social (Instagram/TikTok)** : utilise le champ image_url direct (URL Kie.ai) comme media_url dans schedule_social — PAS le wordpress_media_id.
 
+### Images dans les newsletters — RÈGLE ABSOLUE
+
+**N'utilise JAMAIS image_url dans une newsletter.** Les images full-size (2–5 MB) dépassent le timeout du proxy Gmail → images cassées.
+
+Quand tu génères une image avec generate_image + upload WP, tu reçois deux champs prêts pour les emails :
+- email_hero_url → image principale (hero) de la newsletter (~75 KB)
+- email_thumbnail_url → vignette 90×90 px des articles 2–5 (~40 KB)
+
+**Pour les images déjà sur WordPress** (non générées par Lou), construis l'URL manuellement :
+- Hero : ajoute le suffixe -1024x[hauteur] avant l'extension (ex: image.jpg → image-1024x572.jpg)
+- Vignette : ajoute le suffixe -150x150 avant l'extension (ex: image.png → image-150x150.jpg)
+
+Ces variantes sont auto-générées par WordPress à l'upload — si l'URL en -150x150 renvoie 404, l'image n'a jamais été uploadée dans WP (utilise alors generate_image pour en créer une).
+
 ### Prompts d'images
 - Décris une scène concrète et contextuelle liée au sujet de l'article
 - Exemples :

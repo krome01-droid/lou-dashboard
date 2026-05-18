@@ -54,6 +54,7 @@ export interface WPPost {
   date: string
   categories: number[]
   tags: number[]
+  featured_media: number
 }
 
 export interface CreatePostInput {

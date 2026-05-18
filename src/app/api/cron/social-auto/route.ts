@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk"
-import { listPosts } from "@/lib/wordpress/client"
+import { listPosts, getMediaUrl } from "@/lib/wordpress/client"
 import { scheduleSocialPost } from "@/lib/ghl/social-planner"
 import { execute, query } from "@/lib/db/connection"
 
@@ -96,6 +96,12 @@ Reponds en JSON : { "posts": [{ "article_index": number, "text": string, "hashta
         scheduleTime.setDate(scheduleTime.getDate() + 1) // Tomorrow if time has passed
       }
 
+      // Resolve the article's featured image so the post is published with a visual
+      let mediaUrl: string | undefined
+      if (article.featured_media) {
+        mediaUrl = (await getMediaUrl(article.featured_media)) ?? undefined
+      }
+
       try {
         await scheduleSocialPost({
           platform: "facebook",
@@ -103,6 +109,7 @@ Reponds en JSON : { "posts": [{ "article_index": number, "text": string, "hashta
           hashtags: post.hashtags,
           scheduled_at: scheduleTime.toISOString(),
           link_url: article.link,
+          media_url: mediaUrl,
         })
 
         // Log to DB
@@ -113,7 +120,7 @@ Reponds en JSON : { "posts": [{ "article_index": number, "text": string, "hashta
             [
               scheduleTime.toISOString().slice(0, 19).replace("T", " "),
               `${post.text}\n\n${post.hashtags.map((h) => `#${h}`).join(" ")}`,
-              JSON.stringify({ link: article.link, wp_post_id: article.id }),
+              JSON.stringify({ link: article.link, wp_post_id: article.id, media: mediaUrl ?? null }),
             ],
           )
         } catch {

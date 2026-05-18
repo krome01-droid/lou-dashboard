@@ -28,6 +28,7 @@ function lou_db_proxy_handler(WP_REST_Request $request): WP_REST_Response|WP_Err
     }
 
     global $wpdb;
+    $wpdb->suppress_errors(true); // prevent HTML error output from corrupting JSON responses
 
     $input = $request->get_json_params();
     if (!$input || !isset($input['action'])) {
@@ -55,7 +56,7 @@ function lou_db_proxy_handler(WP_REST_Request $request): WP_REST_Response|WP_Err
                 "CREATE TABLE IF NOT EXISTS {$prefix}lou_content_log (
                     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
                     title VARCHAR(500) NOT NULL,
-                    type ENUM('article','social','newsletter','email') DEFAULT 'article',
+                    type ENUM('article','social','newsletter','email','brief','veille') DEFAULT 'article',
                     status ENUM('draft','review','published','scheduled','failed') DEFAULT 'draft',
                     wp_post_id BIGINT UNSIGNED DEFAULT NULL,
                     wp_url VARCHAR(500) DEFAULT NULL,
@@ -137,6 +138,14 @@ function lou_db_proxy_handler(WP_REST_Request $request): WP_REST_Response|WP_Err
                 }
             }
 
+            // ALTER existing table if type ENUM is missing 'brief' or 'veille'
+            $alter = "ALTER TABLE {$prefix}lou_content_log
+                      MODIFY COLUMN type ENUM('article','social','newsletter','email','brief','veille') DEFAULT 'article'";
+            $res = $wpdb->query($alter);
+            $tables_created[] = $res === false
+                ? "ERREUR ALTER type ENUM: " . $wpdb->last_error
+                : "OK: ALTER {$prefix}lou_content_log.type ENUM";
+
             return rest_ensure_response(['success' => true, 'results' => $tables_created]);
 
         // ------------------------------------------------------------------
@@ -151,6 +160,7 @@ function lou_db_proxy_handler(WP_REST_Request $request): WP_REST_Response|WP_Err
                 'UPDATE',
                 'DELETE',
                 'CREATE TABLE IF NOT EXISTS',
+                'ALTER TABLE',
                 'SHOW TABLES',
             ];
 
@@ -169,7 +179,7 @@ function lou_db_proxy_handler(WP_REST_Request $request): WP_REST_Response|WP_Err
             }
 
             $prepared = !empty($params)
-                ? $wpdb->prepare($sql, $params)
+                ? $wpdb->prepare($sql, ...$params)
                 : $sql;
 
             if (strpos($sql_upper, 'SELECT') === 0 || strpos($sql_upper, 'SHOW') === 0) {

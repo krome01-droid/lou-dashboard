@@ -36,11 +36,27 @@ export async function getAllContacts(): Promise<GHLContact[]> {
     const contacts = response.contacts ?? []
     allContacts.push(...contacts)
 
-    if (contacts.length < 100 || !response.meta?.startAfterId) break
-    startAfterId = response.meta.startAfterId
+    const nextId = response.meta?.startAfterId
+    // Stop at the last page, OR if the cursor stops advancing. Without the
+    // `nextId === startAfterId` guard the same page can be refetched in a loop,
+    // and every contact on it would be emailed again (the newsletter "spam" bug).
+    if (contacts.length < 100 || !nextId || nextId === startAfterId) break
+    startAfterId = nextId
   }
 
-  return allContacts.filter((c) => c.email?.trim())
+  // Keep contacts with an email, deduplicated by address. The imported base
+  // holds duplicate records that share one email, and overlapping pages can
+  // repeat a contact — without this dedup each duplicate receives its own copy
+  // of every send (cause of the repeated newsletters to the same recipient).
+  const seen = new Set<string>()
+  const unique: GHLContact[] = []
+  for (const c of allContacts) {
+    const email = c.email?.trim().toLowerCase()
+    if (!email || seen.has(email)) continue
+    seen.add(email)
+    unique.push(c)
+  }
+  return unique
 }
 
 /**

@@ -65,6 +65,12 @@ services:
       # Cron
       - CRON_SECRET=${CRON_SECRET}
 
+      # CROME OS — soumission des posts sociaux. Le hub applique le palier
+      # d'autonomie, les quotas et le garde-fou éditorial, puis publie.
+      # Sans ces deux variables, `social-auto` s'arrête avant de rédiger.
+      - CROME_INGEST_URL=${CROME_INGEST_URL}
+      - CROME_INGEST_SECRET=${CROME_INGEST_SECRET}
+
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.lou-dashboard.rule=Host(`agent.autoecolemagazine.fr`) && PathPrefix(`/admin-lou`)"

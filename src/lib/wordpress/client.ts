@@ -93,12 +93,18 @@ export async function listPosts(params: {
   per_page?: number
   status?: string
   page?: number
+  after?: string
+  orderby?: string
+  order?: "asc" | "desc"
 }): Promise<WPPost[]> {
   const qs = new URLSearchParams()
   if (params.search) qs.set("search", params.search)
   qs.set("per_page", String(params.per_page ?? 10))
   if (params.status) qs.set("status", params.status)
   if (params.page) qs.set("page", String(params.page))
+  if (params.after) qs.set("after", params.after)
+  if (params.orderby) qs.set("orderby", params.orderby)
+  if (params.order) qs.set("order", params.order)
 
   return wpFetch<WPPost[]>(`/posts?${qs}`)
 }

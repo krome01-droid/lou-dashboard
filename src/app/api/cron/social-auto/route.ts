@@ -20,7 +20,7 @@ import { execute, query } from "@/lib/db/connection"
 // noierait la file de validation d'Armel.
 
 const AGENT_LABEL = "LOU"
-const MAX_AGE_DAYS = 7
+const MAX_AGE_DAYS = 30
 
 /** `datetime` MySQL : un ISO 8601 avec son « T » et son « Z » ne se compare pas. */
 function toMysqlDatetime(iso: string): string {
@@ -61,17 +61,33 @@ export async function GET(req: Request) {
       )
     }
 
-    const posts = await listPosts({ per_page: 10, status: "publish" })
     const since = new Date(Date.now() - MAX_AGE_DAYS * 24 * 3600_000).toISOString()
+
+    // 1. Tenter les articles publiés dans les 30 derniers jours.
+    let posts = await listPosts({
+      per_page: 30,
+      status: "publish",
+      after: since,
+      orderby: "date",
+      order: "desc",
+    })
+    let sourceWindow: "30j" | "recycle" = "30j"
+
+    // 2. Fallback : recycler les 30 derniers articles publiés si la production est en pause.
+    if (posts.length === 0) {
+      posts = await listPosts({ per_page: 30, status: "publish", orderby: "date", order: "desc" })
+      sourceWindow = "recycle"
+    }
+
+    if (posts.length === 0) {
+      return Response.json({ status: "ok", message: "Aucun article disponible à promouvoir", submitted: 0 })
+    }
+
     const recents = posts
       .filter((p) => p.date >= since)
       .sort((a, b) => (a.date < b.date ? 1 : -1))
 
-    if (recents.length === 0) {
-      return Response.json({ status: "ok", message: "Aucun article récent à promouvoir", submitted: 0 })
-    }
-
-    // Articles déjà promus cette semaine. L'ancienne requête lisait une colonne
+    // Articles déjà promus cette fenêtre. L'ancienne requête lisait une colonne
     // `meta_json` qui n'existe pas dans `wp_lou_social_posts` : elle levait à
     // chaque passage, l'erreur était avalée, et LOU repromouvait indéfiniment
     // les mêmes articles. On relit donc la colonne réellement écrite.
@@ -99,11 +115,20 @@ export async function GET(req: Request) {
       console.warn("[cron/social-auto] déduplication indisponible:", e instanceof Error ? e.message : e)
     }
 
-    const article = recents.find((p) => !promus.has(p.id))
+    let article = recents.find((p) => !promus.has(p.id))
+
+    // Si tous les articles récents ont déjà été promus, recycler le plus récent
+    // pour éviter un canal à 0 publication quand la production est en pause.
+    if (!article && posts.length > 0) {
+      article = posts
+        .filter((p) => !promus.has(p.id))
+        .sort((a, b) => (a.date < b.date ? 1 : -1))[0]
+    }
+
     if (!article) {
       return Response.json({
         status: "ok",
-        message: "Tous les articles récents ont déjà été promus",
+        message: "Tous les articles disponibles ont déjà été promus",
         submitted: 0,
       })
     }
@@ -255,18 +280,17 @@ hashtags. 3 à 5 hashtags maximum, en français, sans mélange franglais.`,
 
     return Response.json({
       status: "ok",
+      source: sourceWindow,
       submitted: 1,
       wp_post_id: article.id,
       post_id: resultat.post_id,
       published: resultat.published ?? false,
       duplicate: resultat.duplicate ?? false,
-      // Le motif quand rien n'est parti : quota, fenêtre calme, palier…
       reason: resultat.reason,
       review_only: reviewOnly,
       scene: scene ?? null,
       image_url: imageUrl,
       image_source: imageOrigine,
-      // Distinct de `null` sans explication : dire pourquoi il n'y a pas d'image.
       image_error: imageUrl ? undefined : imageErreur,
     })
   } catch (err) {

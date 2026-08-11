@@ -13,11 +13,15 @@ import {
 } from "@/components/ui/card"
 import { useState, Suspense } from "react"
 import { useSearchParams } from "next/navigation"
-import { LogIn, AlertCircle } from "lucide-react"
+import { LogIn, AlertCircle, Eye, EyeOff } from "lucide-react"
+
+const WP_LOST_PASSWORD_URL =
+  "https://autoecolemagazine.fr/wp-login.php?action=lostpassword"
 
 function LoginForm() {
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
+  const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
   const searchParams = useSearchParams()
@@ -84,16 +88,47 @@ function LoginForm() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="password">Mot de passe</Label>
-              <Input
-                id="password"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Votre mot de passe"
-                required
-                autoComplete="current-password"
-              />
+              <div className="flex items-center justify-between">
+                <Label htmlFor="password">Mot de passe</Label>
+                <a
+                  href={WP_LOST_PASSWORD_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-muted-foreground underline-offset-2 hover:text-primary hover:underline"
+                >
+                  Mot de passe oublié ?
+                </a>
+              </div>
+              <div className="relative">
+                <Input
+                  id="password"
+                  type={showPassword ? "text" : "password"}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Votre mot de passe"
+                  required
+                  autoComplete="current-password"
+                  className="pr-10"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((v) => !v)}
+                  tabIndex={-1}
+                  aria-label={
+                    showPassword
+                      ? "Masquer le mot de passe"
+                      : "Afficher le mot de passe"
+                  }
+                  aria-pressed={showPassword}
+                  className="absolute inset-y-0 right-0 flex w-10 items-center justify-center rounded-r-md text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  {showPassword ? (
+                    <EyeOff className="h-4 w-4" />
+                  ) : (
+                    <Eye className="h-4 w-4" />
+                  )}
+                </button>
+              </div>
             </div>
             <Button
               type="submit"
@@ -105,6 +140,10 @@ function LoginForm() {
               {loading ? "Connexion..." : "Se connecter"}
             </Button>
           </form>
+          <p className="mt-4 text-center text-xs text-muted-foreground">
+            La réinitialisation se fait depuis WordPress. Vous recevrez un
+            e-mail avec un lien sécurisé.
+          </p>
         </CardContent>
       </Card>
     </div>

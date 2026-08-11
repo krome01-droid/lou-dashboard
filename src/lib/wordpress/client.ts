@@ -52,6 +52,7 @@ export interface WPPost {
   status: string
   link: string
   date: string
+  modified?: string
   categories: number[]
   tags: number[]
   featured_media: number
@@ -119,7 +120,7 @@ async function fetchAllPaginated(endpoint: "posts" | "pages", status = "publish"
       per_page: String(perPage),
       page: String(page),
       status,
-      _fields: "id,title,content,slug,status,link,date,categories,tags",
+      _fields: "id,title,content,slug,status,link,date,modified,categories,tags",
     })
     const { data, totalPages: tp } = await wpFetchWithHeaders<WPPost[]>(`/${endpoint}?${qs}`)
     all.push(...data)

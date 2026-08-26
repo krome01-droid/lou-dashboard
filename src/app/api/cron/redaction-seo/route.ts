@@ -173,7 +173,11 @@ export async function GET(req: Request) {
     // réécrire l'existant (deux articles proches se cannibalisent et perdent
     // leur classement TOUS LES DEUX), et le choix du mot-clé pour écarter ce qui
     // est déjà traité.
-    const existants = await listAllPosts("publish").catch(() => [] as WPPost[])
+    // « publish,draft » et non « publish » : un article retenu pour relecture
+    // reste en brouillon, parfois des jours. L'omettre a fait réécrire deux fois
+    // le même titre à deux passages d'affilée — exactement la cannibalisation
+    // que cette liste sert à éviter.
+    const existants = await listAllPosts("publish,draft").catch(() => [] as WPPost[])
     const titres = existants.map((p) => texteNu(p.title.rendered)).slice(0, 200)
 
     // Un mot-clé ou un sujet imposé court-circuitent la Search Console :

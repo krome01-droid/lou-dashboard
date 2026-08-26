@@ -62,6 +62,8 @@ export interface CreatePostInput {
   title: string
   content: string
   slug?: string
+  /** Extrait WordPress. On y met la méta description : c'est ce que Google affiche. */
+  excerpt?: string
   status?: "draft" | "publish"
   categories?: number[]
   tags?: number[]

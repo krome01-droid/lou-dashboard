@@ -15,3 +15,13 @@
 
 # Rapport SEO — Dimanche à 6h
 0 6 * * 0 /usr/local/bin/call-cron.sh seo-report
+
+# Rédaction d'un article SEO/GEO — Mardi et Jeudi à 6h.
+#
+# Placée AVANT `social-auto` (9h, Lun/Mer/Ven) : l'article écrit le mardi est
+# relayé le mercredi. L'inverse ferait tourner le relais sur un stock qui
+# s'épuise, ce qui est exactement ce qui a rendu ANGÈLE muette pendant deux mois.
+#
+# L'article part publié, sauf si le hub l'a retenu pour relecture ; dans ce cas
+# il est en brouillon et le hub prévient par Telegram.
+0 6 * * 2,4 /usr/local/bin/call-cron.sh redaction-seo

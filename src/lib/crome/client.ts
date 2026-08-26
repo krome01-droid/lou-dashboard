@@ -35,6 +35,10 @@ export interface Scene {
 export interface MediaResult {
   ok?: boolean
   image_url?: string | null
+  /** `processing` quand l'attente du studio a expiré sans que l'image échoue. */
+  status?: "processing" | "done" | "error"
+  /** Permet de reprendre une génération que l'attente n'a pas vue aboutir. */
+  generation_id?: string
   refused?: boolean
   reason?: string
   error?: string
@@ -115,6 +119,41 @@ export async function requestImage(scene?: string, format = "1:1"): Promise<Medi
 }
 
 /**
+ * Reprend une génération que l'attente du studio n'a pas vue aboutir.
+ *
+ * `wait` est borné à 45 secondes côté studio, et certains formats dépassent
+ * cette limite — le 3:2 des articles, notamment. Sans cette reprise, l'image
+ * était déclarée perdue alors qu'elle aboutissait quelques secondes plus tard,
+ * et l'article sortait sans vignette.
+ */
+export async function attendreImage(
+  generationId: string,
+  maxAttenteMs = 150_000,
+  intervalleMs = 10_000,
+): Promise<MediaResult> {
+  if (!CROME_MEDIA_URL || !CROME_SECRET) return { error: "CROME_INGEST_URL absent" }
+  const fin = Date.now() + maxAttenteMs
+  let dernier: MediaResult = { status: "processing" }
+  while (Date.now() < fin) {
+    await new Promise((r) => setTimeout(r, intervalleMs))
+    try {
+      const res = await fetch(CROME_MEDIA_URL, {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ agent_id: AGENT_ID, mode: "status", generation_id: generationId }),
+        signal: AbortSignal.timeout(30_000),
+      })
+      dernier = (await res.json().catch(() => ({}))) as MediaResult
+      if (dernier.image_url) return dernier
+      if (dernier.status === "error") return dernier
+    } catch (e) {
+      dernier = { error: e instanceof Error ? e.message : "injoignable" }
+    }
+  }
+  return { ...dernier, reason: dernier.reason ?? "image toujours en cours au terme de l'attente" }
+}
+
+/**
  * Soumet le post au hub.
  *
  * `platforms` est volontairement omis : l'agent ne choisit pas ses canaux.
@@ -147,6 +186,111 @@ export async function submitPost(
       signal: AbortSignal.timeout(30_000),
     })
     const body = (await res.json().catch(() => ({}))) as SubmitResult
+    if (!res.ok) return { ...body, error: body.error ?? `http_${res.status}` }
+    return body
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "injoignable" }
+  }
+}
+
+// ── Rédaction d'articles ─────────────────────────────────────────────────────
+//
+// Même frontière que le studio d'images : l'agent dit de quoi il veut parler,
+// le hub sait comment on écrit ici. Les règles SEO/GEO, le profil éditorial de
+// la marque et la clé Anthropic vivent dans CROME OS — corriger la discipline
+// rédactionnelle se fait à un seul endroit et les quatre marques en héritent.
+//
+// Le hub ne dépose RIEN : il rend un article et un verdict. C'est ce fichier
+// qui, ensuite, le publie sur WordPress avec les identifiants de l'agent. Le
+// hub n'a aucun accès à inris-formations.com, et c'est volontaire.
+
+const CROME_REDACTION_URL = CROME_URL?.replace(/\/submit-post$/, "/rediger-article")
+
+/**
+ * Une affirmation que le rédacteur a gardée dans le corps sans pouvoir la
+ * garantir. `bloquant` désigne ce qui engage la marque — montant, délai, texte
+ * de loi, éligibilité à un financement, périmètre d'une certification.
+ */
+export interface Verification {
+  affirmation: string
+  gravite: "bloquant" | "mineur"
+}
+
+export interface ArticleRedige {
+  titre: string
+  slug: string
+  meta_description: string
+  reponse_directe: string
+  chapo: string
+  corps_html: string
+  points_cles: string[]
+  faq: { question: string; reponse: string }[]
+  mot_cle_principal: string
+  mots_cles_secondaires: string[]
+  liens_internes: { ancre: string; intention: string }[]
+  verifications: Verification[]
+  scene_visuel: string
+}
+
+/**
+ * Le verdict de publication, calculé par le hub et non ici : la règle doit être
+ * la même pour les quatre marques, et corrigible sans redéployer quatre
+ * dashboards. L'agent le traduit dans son CMS, il ne le rejoue pas.
+ */
+export interface VerdictPublication {
+  statut_conseille: "publier" | "relire"
+  motif: string | null
+  bloquants: string[]
+  mineurs: string[]
+}
+
+export interface RedactionResult {
+  ok?: boolean
+  marque?: string
+  article?: ArticleRedige
+  publication?: VerdictPublication
+  jsonld?: unknown[]
+  /**
+   * Ce que le hub a fait de l'alerte Telegram. Elle part de LÀ-BAS : le hub est
+   * le seul à connaître le verdict, et une seule implémentation y sert les
+   * quatre marques, dont deux n'ont aucun moyen d'envoyer quoi que ce soit.
+   */
+  alerte?: { envoyee: boolean; erreur?: string }
+  reason?: string
+  error?: string
+}
+
+export interface DemandeArticle {
+  /** Sujet imposé. Absent, l'angle est choisi à partir du mot-clé ou du vide. */
+  sujet?: string
+  mot_cle?: string
+  /** Titres déjà en ligne : le hub s'en sert pour ne pas cannibaliser l'existant. */
+  titres_existants?: string[]
+  longueur?: number
+  note?: string
+  /** Ne peut que resserrer : force la relecture même si le verdict l'autorisait. */
+  forcer_relecture?: boolean
+}
+
+/**
+ * Demande un article au hub.
+ *
+ * Délai large à dessein : un article de 1 200 mots écrit par Opus avec un effort
+ * élevé prend plusieurs minutes. Couper à 60 s ferait payer la rédaction sans en
+ * récupérer le résultat.
+ */
+export async function requestArticle(demande: DemandeArticle): Promise<RedactionResult> {
+  if (!CROME_REDACTION_URL || !CROME_SECRET) {
+    return { error: "CROME_INGEST_URL / CROME_INGEST_SECRET absents" }
+  }
+  try {
+    const res = await fetch(CROME_REDACTION_URL, {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({ agent_id: AGENT_ID, ...demande }),
+      signal: AbortSignal.timeout(300_000),
+    })
+    const body = (await res.json().catch(() => ({}))) as RedactionResult
     if (!res.ok) return { ...body, error: body.error ?? `http_${res.status}` }
     return body
   } catch (e) {

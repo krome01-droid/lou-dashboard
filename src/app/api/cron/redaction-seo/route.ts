@@ -9,7 +9,8 @@ import {
   requestArticle,
   requestImage,
   attendreImage,
-  fetchScenes,
+  fetchCatalogue,
+  formatArticle,
   isCromeConfigured,
   type ArticleRedige,
 } from "@/lib/crome/client"
@@ -211,13 +212,15 @@ export async function GET(req: Request) {
     let mediaId: number | undefined
     let imageErreur: string | undefined
     if (!dryRun) {
-      const scenes = await fetchScenes()
+      const { scenes, formats } = await fetchCatalogue()
       const scene = scenes.some((s) => s.key === article.scene_visuel)
         ? article.scene_visuel
         : undefined
-      // 3:2 est le format « Blog/Article » du catalogue — un 1:1 serait rogné en
-      // vignette et un 9:16 illisible en tête d'article.
-      let media = await requestImage(scene, "3:2")
+      // 3:2 est le format « Blog/Article » — un 1:1 serait rogné en vignette et
+      // un 9:16 illisible en tête d'article. Mais on ne le demande que si la
+      // marque l'a : c'est en réclamant un 3:2 que cette marque n'avait pas que
+      // le premier article de LOU est sorti sans vignette.
+      let media = await requestImage(scene, formatArticle(formats))
       // L'attente du studio est bornée à 45 s et le 3:2 la dépasse presque
       // toujours : sans cette reprise, l'image aboutissait quelques secondes
       // après qu'on l'ait déclarée perdue.

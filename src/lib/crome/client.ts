@@ -42,6 +42,12 @@ export interface MediaResult {
   refused?: boolean
   reason?: string
   error?: string
+  /**
+   * Le détail rendu par le studio. Sans lui, un refus arrive sous la forme
+   * « studio_erreur », qui ne dit pas quoi corriger : LOU a perdu la vignette de
+   * son premier article sur un « Format inconnu » que ce champ portait déjà.
+   */
+  detail?: unknown
 }
 
 export interface SubmitResult {
@@ -74,8 +80,8 @@ function headers(): Record<string, string> {
  *
  * Injoignable, la liste est vide : le studio appliquera sa scène par défaut.
  */
-export async function fetchScenes(): Promise<Scene[]> {
-  if (!CROME_MEDIA_URL || !CROME_SECRET) return []
+export async function fetchCatalogue(): Promise<{ scenes: Scene[]; formats: string[] }> {
+  if (!CROME_MEDIA_URL || !CROME_SECRET) return { scenes: [], formats: [] }
   try {
     const res = await fetch(CROME_MEDIA_URL, {
       method: "POST",
@@ -83,12 +89,37 @@ export async function fetchScenes(): Promise<Scene[]> {
       body: JSON.stringify({ agent_id: AGENT_ID, mode: "catalog" }),
       signal: AbortSignal.timeout(20_000),
     })
-    if (!res.ok) return []
+    if (!res.ok) return { scenes: [], formats: [] }
     const body = await res.json()
-    return (body.scenes ?? []) as Scene[]
+    return {
+      scenes: (body.scenes ?? []) as Scene[],
+      // Les formats ne sont pas les mêmes d'une marque à l'autre. Demander un
+      // format qu'elle n'a pas fait échouer la génération entière — c'est ce qui
+      // a privé de vignette le premier article de LOU.
+      formats: (body.formats ?? []) as string[],
+    }
   } catch {
-    return []
+    return { scenes: [], formats: [] }
   }
+}
+
+export async function fetchScenes(): Promise<Scene[]> {
+  return (await fetchCatalogue()).scenes
+}
+
+/**
+ * Le format à demander pour une vignette d'article, parmi ceux que la marque
+ * possède réellement.
+ *
+ * 3:2 est le format « Blog/Article » du catalogue ; 16:9 le remplace faute de
+ * mieux, et les cinq marques l'ont. Ne rend jamais `undefined` : `requestImage`
+ * retomberait sur son défaut 1:1, qui serait rogné en vignette d'article.
+ */
+export function formatArticle(formats: string[]): string {
+  for (const voulu of ["3:2", "16:9"]) {
+    if (formats.includes(voulu)) return voulu
+  }
+  return formats[0] ?? "16:9"
 }
 
 /**
@@ -111,7 +142,17 @@ export async function requestImage(scene?: string, format = "1:1"): Promise<Medi
       signal: AbortSignal.timeout(90_000),
     })
     const body = (await res.json().catch(() => ({}))) as MediaResult
-    if (!res.ok) return { ...body, error: body.error ?? `http_${res.status}` }
+    if (!res.ok) {
+      // Le motif du studio vaut mieux que le code d'erreur du hub : « Format
+      // inconnu : 3:2 » se corrige, « studio_erreur » ne s'explique pas.
+      const precision = typeof body.detail === "object" && body.detail !== null
+        ? (body.detail as { error?: string }).error
+        : typeof body.detail === "string"
+          ? body.detail
+          : undefined
+      const base = body.error ?? `http_${res.status}`
+      return { ...body, error: precision ? `${base} — ${precision}` : base }
+    }
     return body
   } catch (e) {
     return { error: e instanceof Error ? e.message : "injoignable" }

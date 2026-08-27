@@ -311,6 +311,15 @@ export interface DemandeArticle {
   note?: string
   /** Ne peut que resserrer : force la relecture même si le verdict l'autorisait. */
   forcer_relecture?: boolean
+  /**
+   * Les scènes que le studio propose pour cette marque. Sans elles, le rédacteur
+   * n'a rien sur quoi choisir et `scene_visuel` revient vide : l'article reçoit
+   * alors la scène PAR DÉFAUT de la marque, la même à chaque fois.
+   *
+   * Le catalogue se lit donc AVANT la rédaction, pas après : c'est le rédacteur
+   * qui sait de quoi parle l'article, pas le code qui l'illustre.
+   */
+  scenes?: Scene[]
 }
 
 /**

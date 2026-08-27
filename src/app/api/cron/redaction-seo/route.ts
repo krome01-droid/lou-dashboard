@@ -188,6 +188,13 @@ export async function GET(req: Request) {
         : await choisirMotCle(titres)
     const motCle = motCleImpose ?? choix.motCle ?? undefined
 
+    // Le catalogue du studio se lit AVANT la rédaction, et son résultat sert
+    // deux fois : le rédacteur choisit la scène qui montre ce dont il parle, et
+    // l'illustration réclame ensuite un format que la marque possède vraiment.
+    // Lu après, comme il l'était, `scene_visuel` ne pouvait que revenir vide et
+    // chaque article de la marque recevait la même scène par défaut.
+    const { scenes, formats } = await fetchCatalogue()
+
     const rendu = await requestArticle({
       sujet,
       mot_cle: motCle,
@@ -195,6 +202,7 @@ export async function GET(req: Request) {
       titres_existants: titres.slice(0, 60),
       longueur: LONGUEUR,
       forcer_relecture: forcerRelecture,
+      scenes,
     })
 
     if (rendu.error || !rendu.article || !rendu.publication) {
@@ -216,7 +224,6 @@ export async function GET(req: Request) {
     let mediaId: number | undefined
     let imageErreur: string | undefined
     if (!dryRun) {
-      const { scenes, formats } = await fetchCatalogue()
       const scene = scenes.some((s) => s.key === article.scene_visuel)
         ? article.scene_visuel
         : undefined
@@ -256,6 +263,10 @@ export async function GET(req: Request) {
         mot_cle_source: motCleImpose ? "paramètre" : motCle ? "search-console" : "moteur",
         mot_cle_diagnostic: choix.diagnostic,
         statut_conseille: verdict.statut_conseille,
+        // La scène retenue par le rédacteur. Vide = scène par défaut de la marque :
+        // c'est le signal que le catalogue n'a pas été lu ou qu'aucune scène ne
+        // collait, et non un détail cosmétique.
+        scene: article.scene_visuel || null,
         motif: verdict.motif,
         bloquants: verdict.bloquants,
         mineurs: verdict.mineurs,
@@ -304,6 +315,10 @@ export async function GET(req: Request) {
       mot_cle_source: motCleImpose ? "paramètre" : motCle ? "search-console" : "moteur",
       mot_cle_diagnostic: choix.diagnostic,
       statut_conseille: verdict.statut_conseille,
+      // La scène retenue par le rédacteur. Vide = scène par défaut de la marque :
+      // c'est le signal que le catalogue n'a pas été lu ou qu'aucune scène ne
+      // collait, et non un détail cosmétique.
+      scene: article.scene_visuel || null,
       motif: verdict.motif,
       bloquants: verdict.bloquants,
       mineurs: verdict.mineurs,

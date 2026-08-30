@@ -7,8 +7,13 @@
 # Veille (actualités sécurité routière) — Lun-Ven à 7h
 0 7 * * 1-5 /usr/local/bin/call-cron.sh veille
 
-# Posts sociaux — Lun/Mer/Ven à 9h
-0 9 * * 1,3,5 /usr/local/bin/call-cron.sh social-auto
+# Posts sociaux — Mercredi et Vendredi à 9h.
+#
+# Cadence alignée le 30/08/2026 sur la stratégie : un article -> un post.
+# `redaction-seo` écrit mardi et jeudi ; le relais suit le lendemain. Il tournait
+# lundi/mercredi/vendredi, soit TROIS passages pour DEUX articles : le passage du
+# lundi n'avait jamais rien de neuf et retombait sur le recyclage.
+0 9 * * 3,5 /usr/local/bin/call-cron.sh social-auto
 
 # Newsletter — Lundi à 8h
 0 8 * * 1 /usr/local/bin/call-cron.sh newsletter
@@ -18,7 +23,7 @@
 
 # Rédaction d'un article SEO/GEO — Mardi et Jeudi à 6h.
 #
-# Placée AVANT `social-auto` (9h, Lun/Mer/Ven) : l'article écrit le mardi est
+# Placée AVANT `social-auto` (9h, Mer/Ven) : l'article écrit le mardi est
 # relayé le mercredi. L'inverse ferait tourner le relais sur un stock qui
 # s'épuise, ce qui est exactement ce qui a rendu ANGÈLE muette pendant deux mois.
 #

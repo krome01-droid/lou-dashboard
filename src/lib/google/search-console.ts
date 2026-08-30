@@ -2,8 +2,23 @@ import { getAccessToken } from "./auth"
 
 const SC_API = "https://www.googleapis.com/webmasters/v3"
 
+/**
+ * La propriété Search Console, telle que l'API la nomme.
+ *
+ * Ce n'est PAS l'adresse du site. Les propriétés de ce compte sont des
+ * propriétés de DOMAINE : elles s'appellent « sc-domain:exemple.fr » et
+ * couvrent www et non-www, http et https. Une valeur « https://exemple.fr/ »
+ * ne désigne aucune propriété existante, et l'API répond alors
+ * « User does not have sufficient permission for site » — un 403 qui accuse
+ * les droits alors que le compte est siteOwner sur tout. Vérifié le 30/08/2026
+ * en listant /webmasters/v3/sites avec le jeton de l'agent.
+ *
+ * Le repli ci-dessous doit donc rester sous cette forme : il est ce qui
+ * s'applique quand la variable manque, et une variable manquante ne doit pas
+ * dégrader silencieusement le ciblage des mots-clés.
+ */
 function getSiteUrl(): string {
-  return process.env.SEARCH_CONSOLE_SITE_URL ?? "https://autoecolemagazine.fr"
+  return process.env.SEARCH_CONSOLE_SITE_URL ?? "sc-domain:autoecolemagazine.fr"
 }
 
 interface SCRow {

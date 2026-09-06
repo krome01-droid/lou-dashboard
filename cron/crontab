@@ -29,4 +29,17 @@
 #
 # L'article part publié, sauf si le hub l'a retenu pour relecture ; dans ce cas
 # il est en brouillon et le hub prévient par Telegram.
-0 6 * * 2,4 /usr/local/bin/call-cron.sh redaction-seo
+
+# Mardi : le FOND. Le mot-clé vient de la Search Console — une requête sur
+# laquelle le site apparaît déjà, mais hors des premiers résultats.
+0 6 * * 2 /usr/local/bin/call-cron.sh redaction-seo
+
+# Jeudi : l'ACTUALITÉ. L'angle vient de la meilleure idée de veille non encore
+# traitée (`veille` tourne du lundi au vendredi à 7h). Deux garde-fous :
+#  - sans idée disponible, la route retombe d'elle-même sur la Search Console,
+#    donc un passage produit toujours un article ;
+#  - le hub n'ayant aucun accès au web, la consigne lui interdit d'affirmer le
+#    moindre détail absent du signal. Sur une actualité réglementaire, presque
+#    tout est un montant ou une date : ces articles partiront donc souvent en
+#    brouillon avec alerte Telegram. C'est voulu, pas une panne.
+0 6 * * 4 /usr/local/bin/call-cron.sh "redaction-seo?source=veille"

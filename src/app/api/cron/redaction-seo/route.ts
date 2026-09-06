@@ -15,6 +15,7 @@ import {
   type ArticleRedige,
 } from "@/lib/crome/client"
 import { getTopKeywords } from "@/lib/google/search-console"
+import { query, execute } from "@/lib/db/connection"
 
 // Rédaction d'un article SEO/GEO, puis dépôt sur autoecolemagazine.fr.
 //
@@ -41,6 +42,121 @@ const LONGUEUR = 1300
 
 /** La catégorie où atterrissent les articles écrits par la machine. */
 const CATEGORIE = "Actualités"
+
+/**
+ * Nombre d'idées de veille examinées pour en retenir une. Les « high » passent
+ * devant les « medium », et à priorité égale la plus récente gagne.
+ */
+const IDEES_EXAMINEES = 20
+
+interface IdeeVeille {
+  id: number
+  titre: string
+  angle: string
+  sourcePrimaire: string | null
+  priorite: string
+}
+
+/** L'angle est le premier paragraphe, entre l'en-tête et la rubrique suivante. */
+function extraireAngle(markdown: string): string {
+  const apres = markdown.replace(/^\s*\*\*[^*]*\*\*\s*/, "")
+  const fin = apres.search(/\n\s*\*\*/)
+  return (fin === -1 ? apres : apres.slice(0, fin)).trim()
+}
+
+function metaObjet(v: unknown): Record<string, unknown> {
+  if (!v) return {}
+  if (typeof v === "object") return v as Record<string, unknown>
+  try {
+    return JSON.parse(String(v)) as Record<string, unknown>
+  } catch {
+    return {}
+  }
+}
+
+/**
+ * La prochaine idée de veille non encore traitée.
+ *
+ * Le marquage passe par `meta_json` et NON par `status` : cette colonne est un
+ * ENUM('draft','review','published','scheduled','failed') et une valeur hors
+ * liste serait refusée — ou vidée en silence hors mode strict. Même piège que
+ * les CHECK de la table sociale de STAN.
+ */
+async function prochaineIdeeVeille(): Promise<IdeeVeille | null> {
+  let lignes: { id: number; title: string; content_markdown: string; meta_json: unknown }[]
+  try {
+    lignes = await query(
+      `SELECT id, title, content_markdown, meta_json
+       FROM wp_lou_content_log
+       WHERE created_by = 'lou-veille'
+         AND JSON_EXTRACT(meta_json, '$.traite_le') IS NULL
+       ORDER BY created_at DESC
+       LIMIT ${IDEES_EXAMINEES}`,
+    )
+  } catch (e) {
+    console.warn(
+      "[cron/redaction-seo] veille illisible:",
+      e instanceof Error ? e.message.slice(0, 200) : e,
+    )
+    return null
+  }
+
+  const rang = (p: string) => (p === "high" ? 0 : p === "medium" ? 1 : 2)
+  const idees = lignes.map((l) => {
+    const meta = metaObjet(l.meta_json)
+    return {
+      id: Number(l.id),
+      titre: l.title,
+      angle: extraireAngle(l.content_markdown ?? ""),
+      sourcePrimaire: (meta.source_primaire as string) ?? null,
+      priorite: (meta.priority as string) ?? "low",
+    }
+  })
+  // `sort` est stable : à priorité égale, l'ordre par date reste celui du SELECT.
+  idees.sort((a, b) => rang(a.priorite) - rang(b.priorite))
+  return idees.find((i) => i.angle.length > 0) ?? null
+}
+
+/** Marque l'idée comme traitée. Appelé APRÈS le dépôt : un échec doit pouvoir rejouer. */
+async function marquerIdeeTraitee(id: number): Promise<void> {
+  try {
+    await execute(
+      `UPDATE wp_lou_content_log
+       SET meta_json = JSON_SET(COALESCE(meta_json, '{}'), '$.traite_le', ?)
+       WHERE id = ?`,
+      [new Date().toISOString(), id],
+    )
+  } catch (e) {
+    // Non bloquant, mais bruyant : sans ce marquage la même idée reviendra au
+    // prochain passage, et l'article serait écrit deux fois.
+    console.error(
+      "[cron/redaction-seo] marquage de l'idée de veille échoué:",
+      e instanceof Error ? e.message.slice(0, 200) : e,
+    )
+  }
+}
+
+/**
+ * La consigne qui accompagne une idée de veille.
+ *
+ * Le hub n'a AUCUN accès au web : il ne peut pas lire l'article de presse d'où
+ * vient le signal, et l'événement est postérieur à ce qu'il connaît. Lui donner
+ * un titre d'actualité sans garde-fou, c'est lui demander d'inventer la date
+ * d'entrée en vigueur, le montant et le numéro du texte.
+ */
+function consigneVeille(i: IdeeVeille): string {
+  return [
+    "Cet article part d'un SIGNAL DE VEILLE, et non d'une source que tu aurais lue : tu n'as aucun accès au web, et l'événement est vraisemblablement postérieur à ce que tu connais.",
+    "",
+    `Titre de presse repéré : ${i.titre}`,
+    `Angle proposé par la veille : ${i.angle}`,
+    i.sourcePrimaire ? `Source primaire que le lecteur devra consulter : ${i.sourcePrimaire}` : "",
+    "",
+    "N'affirme AUCUN détail de cet événement qui ne figure pas ci-dessus : ni date d'entrée en vigueur, ni montant, ni numéro ou intitulé de texte, ni chiffre. Traite le sujet de fond que ce signal ouvre — l'état du droit, ce qui est stable, ce que le lecteur doit vérifier lui-même et où. Toute affirmation engageante que tu conserverais malgré tout doit partir dans « verifications ».",
+  ]
+    .filter(Boolean)
+    .join("\n")
+}
 
 /**
  * La zone où un mot-clé mérite un article : le site apparaît déjà dessus mais
@@ -157,9 +273,15 @@ export async function GET(req: Request) {
   // `?dry_run=1` : tout se déroule, rien n'est déposé sur WordPress. C'est
   // l'outil de vérification, jamais un réglage du cron.
   const dryRun = params.get("dry_run") === "1"
-  const sujet = params.get("sujet") ?? undefined
+  const sujetImpose = params.get("sujet") ?? undefined
   const motCleImpose = params.get("mot_cle") ?? undefined
   const forcerRelecture = params.get("relire") === "1"
+  // `?source=veille` : partir de la meilleure idée de veille non traitée plutôt
+  // que de la Search Console. C'est l'autre voie éditoriale — l'actualité —
+  // là où la Search Console sert le fond. Si aucune idée n'est disponible, on
+  // retombe silencieusement sur la Search Console : un passage doit toujours
+  // produire un article.
+  const sourceVeille = params.get("source") === "veille"
 
   try {
     if (!isCromeConfigured()) {
@@ -180,11 +302,23 @@ export async function GET(req: Request) {
     const existants = await listAllPosts("publish,draft").catch(() => [] as WPPost[])
     const titres = existants.map((p) => texteNu(p.title.rendered)).slice(0, 200)
 
-    // Un mot-clé ou un sujet imposé court-circuitent la Search Console :
-    // l'opérateur a déjà décidé de l'angle.
+    // L'angle vient, par ordre de priorité : du paramètre, de la veille, puis
+    // de la Search Console.
+    const idee =
+      sourceVeille && !sujetImpose && !motCleImpose ? await prochaineIdeeVeille() : null
+    const sujet = sujetImpose ?? (idee ? `${idee.titre}` : undefined)
+    const note = idee ? consigneVeille(idee) : undefined
+
+    // Un mot-clé, un sujet imposé ou une idée de veille court-circuitent la
+    // Search Console : l'angle est déjà décidé.
     const choix =
       motCleImpose || sujet
-        ? { motCle: null, diagnostic: "angle imposé par l'appelant" }
+        ? {
+            motCle: null,
+            diagnostic: idee
+              ? `idée de veille #${idee.id} (priorité ${idee.priorite})`
+              : "angle imposé par l'appelant",
+          }
         : await choisirMotCle(titres)
     const motCle = motCleImpose ?? choix.motCle ?? undefined
 
@@ -197,6 +331,7 @@ export async function GET(req: Request) {
 
     const rendu = await requestArticle({
       sujet,
+      note,
       mot_cle: motCle,
       // Le hub plafonne à 60 : on lui donne les plus récents, pas les 200.
       titres_existants: titres.slice(0, 60),
@@ -262,6 +397,8 @@ export async function GET(req: Request) {
         mot_cle: article.mot_cle_principal,
         mot_cle_source: motCleImpose ? "paramètre" : motCle ? "search-console" : "moteur",
         mot_cle_diagnostic: choix.diagnostic,
+        angle_source: idee ? "veille" : sujetImpose ? "paramètre" : motCle ? "search-console" : "moteur",
+        veille_id: idee?.id ?? null,
         statut_conseille: verdict.statut_conseille,
         // La scène retenue par le rédacteur. Vide = scène par défaut de la marque :
         // c'est le signal que le catalogue n'a pas été lu ou qu'aucune scène ne
@@ -287,6 +424,10 @@ export async function GET(req: Request) {
       ...(categorie ? { categories: [categorie] } : {}),
       ...(mediaId ? { featured_media: mediaId } : {}),
     })
+
+    // L'idée n'est marquée qu'ici, une fois l'article réellement déposé : un
+    // échec en amont doit pouvoir rejouer la même idée au passage suivant.
+    if (idee) await marquerIdeeTraitee(idee.id)
 
     // WordPress retire les balises `<script>` pour les comptes sans le droit
     // `unfiltered_html`. Le dire plutôt que laisser croire aux données
@@ -314,6 +455,8 @@ export async function GET(req: Request) {
       mot_cle: article.mot_cle_principal,
       mot_cle_source: motCleImpose ? "paramètre" : motCle ? "search-console" : "moteur",
       mot_cle_diagnostic: choix.diagnostic,
+      angle_source: idee ? "veille" : sujetImpose ? "paramètre" : motCle ? "search-console" : "moteur",
+      veille_id: idee?.id ?? null,
       statut_conseille: verdict.statut_conseille,
       // La scène retenue par le rédacteur. Vide = scène par défaut de la marque :
       // c'est le signal que le catalogue n'a pas été lu ou qu'aucune scène ne

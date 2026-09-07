@@ -266,6 +266,65 @@ async function lireFlux(
   return { items: retenus, diag }
 }
 
+/**
+ * Sortie structurée par outil forcé, et NON du JSON demandé dans du texte.
+ *
+ * Mesuré le 07/09/2026 sur le premier passage réel : la réponse a été coupée à
+ * `max_tokens` (4000 tokens pile, `stop_reason: "max_tokens"`) au milieu d'une
+ * chaîne. Le JSON devenait illisible, l'extraction par expression régulière
+ * échouait, et la veille rendait ZÉRO alerte en répondant `200 OK` — personne
+ * n'aurait vu qu'elle ne produisait plus rien.
+ *
+ * `daily-brief` avait déjà rencontré et réglé exactement cela. Le plafond est
+ * relevé à 8000, mais c'est la BRIÈVETÉ imposée par le schéma qui protège
+ * vraiment : sans elle, le modèle réécrit un paragraphe par champ et retrouvera
+ * la borne quel qu'en soit le niveau.
+ */
+const OUTIL_ALERTES = {
+  name: "rendre_alertes",
+  description: "Enregistre les actualités retenues pour la rédaction.",
+  input_schema: {
+    type: "object" as const,
+    properties: {
+      alerts: {
+        type: "array",
+        description:
+          "Au plus 6 actualités retenues, la plus engageante d'abord. Mieux vaut deux alertes utiles que six de remplissage : rendre un tableau vide est une réponse valable.",
+        items: {
+          type: "object",
+          properties: {
+            title: { type: "string", description: "Titre court de l'actualité retenue." },
+            relevance: {
+              type: "string",
+              description: "UNE phrase : pourquoi cette actualité compte pour cette audience.",
+            },
+            article_idea: {
+              type: "string",
+              description: "UNE phrase : l'angle de l'article à écrire.",
+            },
+            source_primaire: {
+              type: "string",
+              description:
+                "Le document ou l'institution à consulter pour écrire l'article : décret, arrêté, communiqué, rapport, référentiel.",
+            },
+            source_url: { type: "string", description: "Le lien du signal, recopié tel quel." },
+            priority: { type: "string", enum: ["high", "medium", "low"] },
+          },
+          required: [
+            "title",
+            "relevance",
+            "article_idea",
+            "source_primaire",
+            "source_url",
+            "priority",
+          ],
+        },
+      },
+    },
+    required: ["alerts"],
+  },
+}
+
 export async function GET(req: Request) {
   if (req.headers.get("Authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
     return Response.json({ error: "Unauthorized" }, { status: 401 })
@@ -311,7 +370,9 @@ export async function GET(req: Request) {
 
     const analyse = await client.messages.create({
       model: "claude-sonnet-4-6",
-      max_tokens: 4000,
+      max_tokens: 8000,
+      tools: [OUTIL_ALERTES],
+      tool_choice: { type: "tool", name: "rendre_alertes" },
       messages: [
         {
           role: "user",
@@ -328,27 +389,25 @@ Pour chaque actualite retenue, indique dans "source_primaire" le document ou l'i
 Actualites :
 ${liste}
 
-Reponds en JSON : { "alerts": [{ "title": string, "relevance": string, "article_idea": string, "source_primaire": string, "source_url": string, "priority": "high"|"medium"|"low" }] }`,
+Rends ton analyse en appelant l'outil rendre_alertes, et rien d'autre. Six alertes au maximum, UNE phrase par champ : c'est une note de veille, pas un article.`,
         },
       ],
     })
 
-    const texte = analyse.content[0].type === "text" ? analyse.content[0].text : ""
-
-    let alerts: {
+    const bloc = analyse.content.find((c) => c.type === "tool_use")
+    if (!bloc || bloc.type !== "tool_use") {
+      // Ne pas rendre `200 OK` avec zéro alerte : c'est ainsi que la coupure à
+      // max_tokens est restée invisible.
+      throw new Error(`Réponse sans tool_use (stop_reason: ${analyse.stop_reason})`)
+    }
+    const alerts = ((bloc.input as { alerts?: unknown[] }).alerts ?? []) as {
       title: string
       relevance: string
       article_idea: string
       source_primaire?: string
       source_url: string
       priority: string
-    }[] = []
-    try {
-      const json = texte.match(/\{[\s\S]*\}/)
-      if (json) alerts = JSON.parse(json[0]).alerts ?? []
-    } catch {
-      console.warn("[cron/veille] reponse du modele non parsable")
-    }
+    }[]
 
     const aGarder = alerts.filter(
       (a) => a.priority === "high" || a.priority === "medium",
@@ -360,6 +419,7 @@ Reponds en JSON : { "alerts": [{ "title": string, "relevance": string, "article_
         dry_run: true,
         flux: diagnostics,
         items_analyses: items.length,
+        stop_reason: analyse.stop_reason,
         alerts: aGarder,
       })
     }
@@ -396,6 +456,7 @@ Reponds en JSON : { "alerts": [{ "title": string, "relevance": string, "article_
       status: "ok",
       flux: diagnostics,
       items_analyses: items.length,
+      stop_reason: analyse.stop_reason,
       alerts: alerts.length,
       retenues: aGarder.length,
       saved_to_log: saved,

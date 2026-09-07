@@ -44,6 +44,15 @@ const LONGUEUR = 1300
 const CATEGORIE = "Actualités"
 
 /**
+ * Au-delà, une idée de veille n'est plus une actualité : la publier la
+ * présenterait comme neuve. À raison de ~6 idées produites par jour pour une
+ * seule consommée, le stock grossit vite — sans cette borne, la rédaction
+ * quotidienne finirait par puiser dans des nouvelles de plusieurs semaines.
+ * Aucune idée fraîche disponible ? La Search Console reprend la main.
+ */
+const FRAICHEUR_JOURS = 7
+
+/**
  * Nombre d'idées de veille examinées pour en retenir une. Les « high » passent
  * devant les « medium », et à priorité égale la plus récente gagne.
  */
@@ -90,6 +99,7 @@ async function prochaineIdeeVeille(): Promise<IdeeVeille | null> {
        FROM wp_lou_content_log
        WHERE created_by = 'lou-veille'
          AND JSON_EXTRACT(meta_json, '$.traite_le') IS NULL
+         AND created_at >= DATE_SUB(NOW(), INTERVAL ${FRAICHEUR_JOURS} DAY)
        ORDER BY created_at DESC
        LIMIT ${IDEES_EXAMINEES}`,
     )

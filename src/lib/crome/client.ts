@@ -312,6 +312,13 @@ export interface DemandeArticle {
   /** Ne peut que resserrer : force la relecture même si le verdict l'autorisait. */
   forcer_relecture?: boolean
   /**
+   * Régime éditorial. « fond » par défaut, côté hub. « actu » n'assouplit qu'une
+   * chose : un bloquant portant sur une RÈGLE STABLE cesse de retenir l'article.
+   * Un bloquant portant sur un détail de l'événement retient toujours — c'est
+   * précisément ce que le modèle ne peut pas vérifier.
+   */
+  regime?: "fond" | "actu"
+  /**
    * Les scènes que le studio propose pour cette marque. Sans elles, le rédacteur
    * n'a rien sur quoi choisir et `scene_visuel` revient vide : l'article reçoit
    * alors la scène PAR DÉFAUT de la marque, la même à chaque fois.

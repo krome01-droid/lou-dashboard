@@ -342,6 +342,10 @@ export async function GET(req: Request) {
     const rendu = await requestArticle({
       sujet,
       note,
+      // Un article issu de la veille relève du régime ACTUALITÉ : sans lui, la
+      // moindre règle de droit citée le retiendrait, et la voie actu ne
+      // publierait jamais rien.
+      regime: idee ? "actu" : undefined,
       mot_cle: motCle,
       // Le hub plafonne à 60 : on lui donne les plus récents, pas les 200.
       titres_existants: titres.slice(0, 60),

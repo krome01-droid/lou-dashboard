@@ -4,8 +4,10 @@
 # Brief quotidien — tous les jours à 7h
 0 7 * * * /usr/local/bin/call-cron.sh daily-brief
 
-# Veille (actualités sécurité routière) — Lun-Ven à 7h
-0 7 * * 1-5 /usr/local/bin/call-cron.sh veille
+# Veille (actualité du permis, de la sécurité routière et de la mobilité) — TOUS
+# LES JOURS à 7h. Elle ne tournait que du lundi au vendredi ; la rédaction étant
+# devenue quotidienne, le week-end doit avoir de la matière fraîche lui aussi.
+0 7 * * * /usr/local/bin/call-cron.sh veille
 
 # Posts sociaux — Mercredi et Vendredi à 9h.
 #
@@ -34,12 +36,16 @@
 # laquelle le site apparaît déjà, mais hors des premiers résultats.
 0 6 * * 2 /usr/local/bin/call-cron.sh redaction-seo
 
-# Jeudi : l'ACTUALITÉ. L'angle vient de la meilleure idée de veille non encore
-# traitée (`veille` tourne du lundi au vendredi à 7h). Deux garde-fous :
+# TOUS LES JOURS à 8h : l'ACTUALITÉ. Une heure après la veille du matin, donc sur
+# la matière du jour même. Trois garde-fous :
 #  - sans idée disponible, la route retombe d'elle-même sur la Search Console,
 #    donc un passage produit toujours un article ;
 #  - le hub n'ayant aucun accès au web, la consigne lui interdit d'affirmer le
 #    moindre détail absent du signal. Sur une actualité réglementaire, presque
 #    tout est un montant ou une date : ces articles partiront donc souvent en
 #    brouillon avec alerte Telegram. C'est voulu, pas une panne.
-0 6 * * 4 /usr/local/bin/call-cron.sh "redaction-seo?source=veille"
+#  - seules les idées de moins de 7 jours sont retenues : une actualité plus
+#    ancienne ne se publie pas comme neuve.
+#  - 8h30 et non 8h : la newsletter du lundi part à 8h, et deux rédactions
+#    longues en parallèle sur le même conteneur ne s'imposent pas.
+30 8 * * * /usr/local/bin/call-cron.sh "redaction-seo?source=veille"

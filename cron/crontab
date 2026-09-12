@@ -49,3 +49,16 @@
 #  - 8h30 et non 8h : la newsletter du lundi part à 8h, et deux rédactions
 #    longues en parallèle sur le même conteneur ne s'imposent pas.
 30 8 * * * /usr/local/bin/call-cron.sh "redaction-seo?source=veille"
+
+# Maillage interne des articles existants — TOUS LES JOURS à 5h.
+#
+# Branché le 12/09/2026. Les articles du site ne se liaient pas entre eux :
+# `redaction-seo` jetait les suggestions de liens du hub, et l'existant n'en
+# avait pas davantage. Chaque passage reprend TROIS articles publiés, ceux qui
+# ont le moins de liens internes, et fait poser des liens contextuels par le
+# hub — qui ne change pas un mot d'autre.
+#
+# 5h : une heure avant `redaction-seo` (6h), donc jamais en même temps qu'une
+# rédaction sur le même conteneur ; et les nouveaux articles de la veille sont
+# déjà dans la liste des cibles possibles.
+0 5 * * * /usr/local/bin/call-cron.sh maillage-interne

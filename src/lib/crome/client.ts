@@ -354,3 +354,86 @@ export async function requestArticle(demande: DemandeArticle): Promise<Redaction
     return { error: e instanceof Error ? e.message : "injoignable" }
   }
 }
+
+// ── Maillage interne ─────────────────────────────────────────────────────────
+//
+// Le hub rend des SUGGESTIONS de liens avec chaque article (`liens_internes` :
+// une ancre, une intention) — et jusqu'au 12/09/2026 cet agent les jetait. Le
+// maillage est maintenant un acte à part, confié à `mailler-article` : l'agent
+// envoie l'article et la liste de ses propres pages, le hub choisit des ancres
+// DANS le texte existant et pose les liens. Il ne réécrit rien d'autre — c'est
+// vérifié de son côté, et c'est ce qui autorise à repasser sur des articles en
+// ligne depuis des mois.
+//
+// Même frontière que la rédaction : le hub ne connaît pas ce site, il ne
+// reçoit que ce qu'on lui liste. Une page absente des candidats ne sera
+// jamais liée.
+
+const CROME_MAILLAGE_URL = CROME_URL?.replace(/\/submit-post$/, "/mailler-article")
+
+/** Une page du site vers laquelle un lien peut conduire. */
+export interface CandidatLien {
+  url: string
+  titre: string
+  /** Extrait ou méta description : c'est ce qui dit au hub de quoi parle la page. */
+  resume?: string
+  /** « article », « page », « formation »… informatif. */
+  type?: string
+}
+
+export interface DemandeMaillage {
+  article: {
+    titre: string
+    /** URL publique, pour ne jamais lier l'article à lui-même. */
+    url?: string
+    contenu: string
+    format?: "html" | "markdown"
+  }
+  candidats: CandidatLien[]
+  /** Défaut côté hub : 4. Plafond : 8. */
+  max_liens?: number
+}
+
+export interface MaillageResult {
+  ok?: boolean
+  /** Le contenu avec ses liens. Identique à l'entrée si `modifie` est faux. */
+  contenu?: string
+  modifie?: boolean
+  /** Pourquoi rien n'a été fait sans appeler le modèle : `aucun_candidat`, `corps_trop_court`. */
+  motif?: string
+  liens?: { ancre: string; url: string; titre: string }[]
+  /** Propositions du modèle refusées par le hub, avec le motif — utile pour juger la qualité. */
+  ecartes?: { ancre: string; url: string | null; motif: string }[]
+  liens_avant?: number
+  liens_apres?: number
+  candidats?: number
+  reason?: string
+  error?: string
+}
+
+/**
+ * Demande au hub de poser des liens internes dans un article.
+ *
+ * Deux minutes de délai : le modèle ne fait que choisir des ancres, l'appel
+ * dure quelques dizaines de secondes. Le résultat est TOUJOURS utilisable :
+ * en cas d'erreur, l'appelant garde son contenu d'origine — un article sans
+ * lien reste un article, il ne faut pas le perdre pour un maillage manqué.
+ */
+export async function maillerArticle(demande: DemandeMaillage): Promise<MaillageResult> {
+  if (!CROME_MAILLAGE_URL || !CROME_SECRET) {
+    return { error: "CROME_INGEST_URL / CROME_INGEST_SECRET absents" }
+  }
+  try {
+    const res = await fetch(CROME_MAILLAGE_URL, {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({ agent_id: AGENT_ID, ...demande }),
+      signal: AbortSignal.timeout(120_000),
+    })
+    const body = (await res.json().catch(() => ({}))) as MaillageResult
+    if (!res.ok) return { ...body, error: body.error ?? `http_${res.status}` }
+    return body
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "injoignable" }
+  }
+}

@@ -12,7 +12,9 @@ import {
   fetchCatalogue,
   formatArticle,
   isCromeConfigured,
+  maillerArticle,
   type ArticleRedige,
+  type CandidatLien,
 } from "@/lib/crome/client"
 import { getTopKeywords } from "@/lib/google/search-console"
 import { query, execute } from "@/lib/db/connection"
@@ -193,6 +195,22 @@ function texteNu(html: string): string {
 }
 
 /**
+ * Les pages publiées du site, dans la forme que le hub de maillage attend.
+ * Les brouillons en sont exclus : un lien vers une page qui n'existe pas
+ * encore publiquement est un lien mort.
+ */
+function candidatsMaillage(posts: WPPost[]): CandidatLien[] {
+  return posts
+    .filter((p) => p.status === "publish" && p.link)
+    .map((p) => ({
+      url: p.link,
+      titre: texteNu(p.title.rendered),
+      resume: texteNu(p.excerpt?.rendered ?? "").slice(0, 300) || undefined,
+      type: "article",
+    }))
+}
+
+/**
  * Assemble le HTML déposé dans WordPress.
  *
  * L'ordre n'est pas cosmétique : la réponse directe est en tête parce que c'est
@@ -364,6 +382,24 @@ export async function GET(req: Request) {
 
     const article = rendu.article
     const verdict = rendu.publication
+
+    // Le maillage interne, AVANT l'assemblage : seul le corps rédigé reçoit des
+    // liens, pas la FAQ ni le bloc « À retenir ». Le hub choisit des ancres dans
+    // le texte existant et pose les liens ; il ne réécrit rien d'autre.
+    // Non bloquant : un article sans lien reste un article, et le rattrapage
+    // quotidien (`maillage-interne`) y reviendra de toute façon.
+    const maillage = await maillerArticle({
+      article: { titre: article.titre, contenu: article.corps_html, format: "html" },
+      candidats: candidatsMaillage(existants),
+    })
+    if (maillage.ok && maillage.contenu) article.corps_html = maillage.contenu
+    else if (maillage.error) console.warn("[cron/redaction-seo] maillage non appliqué:", maillage.error)
+    const rapportMaillage = {
+      liens: maillage.liens?.length ?? 0,
+      cibles: (maillage.liens ?? []).map((l) => l.url),
+      ecartes: maillage.ecartes?.length ?? 0,
+      motif: maillage.motif ?? maillage.error ?? null,
+    }
     const statut: "publish" | "draft" =
       verdict.statut_conseille === "publier" ? "publish" : "draft"
 
@@ -423,6 +459,7 @@ export async function GET(req: Request) {
         mineurs: verdict.mineurs,
         longueur_html: contenu.length,
         nb_faq: article.faq?.length ?? 0,
+        maillage: rapportMaillage,
       })
     }
 
@@ -480,6 +517,7 @@ export async function GET(req: Request) {
       bloquants: verdict.bloquants,
       mineurs: verdict.mineurs,
       jsonld_conserve: jsonldConserve,
+      maillage: rapportMaillage,
       image_url: imageUrl,
       // Distinct d'un `null` muet : dire pourquoi il n'y a pas de vignette.
       image_error: mediaId ? undefined : imageErreur,

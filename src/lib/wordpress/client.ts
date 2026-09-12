@@ -48,6 +48,8 @@ export interface WPPost {
   id: number
   title: { rendered: string }
   content: { rendered: string }
+  /** Présent quand la liste le demande (`_fields`) : sert de résumé aux candidats de maillage. */
+  excerpt?: { rendered: string }
   slug: string
   status: string
   link: string
@@ -91,6 +93,31 @@ export async function getPost(id: number): Promise<WPPost> {
   return wpFetch<WPPost>(`/posts/${id}`)
 }
 
+/**
+ * Le contenu tel qu'il est STOCKÉ, pas tel qu'il est rendu.
+ *
+ * `content.rendered` a déjà traversé `wpautop` et les filtres du thème : le
+ * renvoyer en écriture figerait ces transformations dans la base, et chaque
+ * passage en ajouterait une couche. `context=edit` donne `content.raw` — c'est
+ * la seule forme qu'on a le droit de modifier puis de réécrire.
+ */
+export async function getPostRaw(
+  id: number,
+): Promise<{ id: number; slug: string; link: string; status: string; title: string; excerpt: string; raw: string }> {
+  const p = await wpFetch<WPPost & { content: { raw?: string; rendered: string }; excerpt?: { raw?: string; rendered?: string }; title: { raw?: string; rendered: string } }>(
+    `/posts/${id}?context=edit`,
+  )
+  return {
+    id: p.id,
+    slug: p.slug,
+    link: p.link,
+    status: p.status,
+    title: p.title.raw ?? p.title.rendered,
+    excerpt: p.excerpt?.raw ?? p.excerpt?.rendered ?? "",
+    raw: p.content.raw ?? p.content.rendered,
+  }
+}
+
 export async function listPosts(params: {
   search?: string
   per_page?: number
@@ -122,7 +149,7 @@ async function fetchAllPaginated(endpoint: "posts" | "pages", status = "publish"
       per_page: String(perPage),
       page: String(page),
       status,
-      _fields: "id,title,content,slug,status,link,date,modified,categories,tags",
+      _fields: "id,title,content,excerpt,slug,status,link,date,modified,categories,tags",
     })
     const { data, totalPages: tp } = await wpFetchWithHeaders<WPPost[]>(`/${endpoint}?${qs}`)
     all.push(...data)

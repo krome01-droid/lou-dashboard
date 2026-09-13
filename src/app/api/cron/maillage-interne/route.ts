@@ -90,7 +90,8 @@ export async function GET(req: Request) {
     // L'état du maillage sur tout le site : c'est aussi ce que la réponse
     // rapporte, pour qu'on voie le rattrapage avancer d'un passage à l'autre.
     const etat = publies.map((p) => ({ p, liens: nbLiensInternes(p.content?.rendered ?? "") }))
-    const enRetard = etat.filter((x) => x.liens < seuil)
+    // Sans contenu rendu, rien à mailler : ces pages ne comptent pas comme en retard.
+    const enRetard = etat.filter((x) => x.liens < seuil && (x.p.content?.rendered ?? "").trim().length > 0)
 
     const aTraiter = slugImpose
       ? etat.filter((x) => x.p.slug === slugImpose)
@@ -105,6 +106,14 @@ export async function GET(req: Request) {
     const traites: Record<string, unknown>[] = []
     for (const { p, liens } of aTraiter) {
       const brut = await getPostRaw(p.id)
+      // Un `content.raw` vide, c'est une page dont le contenu vit ailleurs (un
+      // constructeur de pages, un gabarit) : il n'y a rien où poser un lien,
+      // et le hub répondrait « contenu_requis » après un aller-retour pour rien.
+      // Vu au premier passage sur « les-auto-ecoles-de-rennes ».
+      if (!brut.raw.trim()) {
+        traites.push({ wp_id: p.id, slug: p.slug, url: p.link, liens_avant: liens, liens_poses: 0, motif: "contenu_brut_vide", ecrit: false })
+        continue
+      }
       const resultat = await maillerArticle({
         article: { titre: brut.title, url: brut.link, contenu: brut.raw, format: "html" },
         candidats: pages,

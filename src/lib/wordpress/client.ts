@@ -126,9 +126,12 @@ export async function listPosts(params: {
   after?: string
   orderby?: string
   order?: "asc" | "desc"
+  /** Restreint à ces catégories (ids WordPress). */
+  categories?: number[]
 }): Promise<WPPost[]> {
   const qs = new URLSearchParams()
   if (params.search) qs.set("search", params.search)
+  if (params.categories?.length) qs.set("categories", params.categories.join(","))
   qs.set("per_page", String(params.per_page ?? 10))
   if (params.status) qs.set("status", params.status)
   if (params.page) qs.set("page", String(params.page))

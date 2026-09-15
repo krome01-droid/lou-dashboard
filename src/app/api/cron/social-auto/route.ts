@@ -1,30 +1,71 @@
 import Anthropic from "@anthropic-ai/sdk"
-import { listPosts, getMediaUrl } from "@/lib/wordpress/client"
-import { fetchScenes, requestImage, submitPost, isCromeConfigured, type SubmitResult } from "@/lib/crome/client"
-import { execute, query } from "@/lib/db/connection"
+import { listPosts, listCategories, type WPPost } from "@/lib/wordpress/client"
+import {
+  fetchCatalogue,
+  formatPost,
+  requestImage,
+  submitPost,
+  isCromeConfigured,
+  type SubmitResult,
+} from "@/lib/crome/client"
+import { execute } from "@/lib/db/connection"
+import { enregistrerPublication, getPublicationsRecentes } from "@/lib/db/publications"
+import {
+  choisirSujet,
+  combinaisonsRecentes,
+  menu,
+  visuelValide,
+  type Candidat,
+} from "@/lib/social/rotation"
 
-// Promotion d'un article, puis soumission à CROME OS.
-//
-// Cette tâche programmait jusqu'ici directement dans GoHighLevel : LOU décidait
-// seule de ce qui partait, à quelle heure, sur quel réseau, sans quota ni
-// relecture, et l'écosystème n'en gardait aucune trace. Elle propose désormais
-// à CROME OS, qui décide (palier d'autonomie, quota, fenêtre calme, canaux
-// réellement branchés) et publie via Postiz.
-//
-// LOU ne choisit pas ses canaux : `platforms` est omis côté client, et le hub
-// route vers les comptes réellement connectés pour autoecolemagazine.fr. C'est
-// lui qui détient la carte des intégrations, pas l'agent.
-//
-// Un seul article par passage. Le palier plafonne les publications machine à
-// 2 par jour : en produire davantage n'empilerait que des refus de quota, ou
-// noierait la file de validation d'Armel.
+/**
+ * La publication sociale de LOU : proposer, jamais publier.
+ *
+ * Un passage = un post. Le palier plafonne les publications machine à 2 par
+ * jour : en produire davantage n'empilerait que des refus de quota, ou
+ * noierait la file de validation d'Armel.
+ *
+ * LOU ne choisit pas ses canaux : `platforms` est omis côté client, et le hub
+ * route vers les comptes réellement connectés pour autoecolemagazine.fr. C'est
+ * lui qui détient la carte des intégrations, pas l'agent.
+ *
+ * ── Ce qui a changé le 16/09/2026, et pourquoi ───────────────────────────────
+ * La tâche ne connaissait qu'un registre — les articles des 30 derniers jours,
+ * avec une garde par article relue dans `wp_lou_social_posts`. Elle ne se
+ * répétait donc pas ; elle se taisait dès que la rédaction s'arrêtait : rien
+ * du 28/08 au 09/09. Le magazine a pourtant un second registre, celui que ses
+ * lecteurs cherchent : les guides des auto-écoles d'une ville.
+ *
+ * Transposé de MAYA (commit 830cdaf), avec les registres du magazine :
+ *
+ *   1. **Deux registres.** Les articles éditoriaux et les guides de ville —
+ *      la catégorie `villes`, plus tout article dont le slug commence par
+ *      `auto-ecoles-` (Strasbourg et Toulouse sont rangés en « Actualités »,
+ *      les petites villes en « Guides »). `lib/social/rotation` tient la part
+ *      de chacun et écarte ce qui vient de partir, sur la foi de
+ *      `wp_lou_publications`.
+ *   2. **Le visuel se choisit en entier.** Scène, lumière, style et lieu, en
+ *      évitant ce que les derniers posts ont montré. Un axe hors catalogue est
+ *      laissé vide et le studio le tire au sort. L'image de l'article n'est
+ *      plus reprise : c'est une couverture 3:2, et un post de fil se lit en
+ *      4:5.
+ *
+ * Ce que la tâche NE fait toujours pas : publier sans matière. Si aucun
+ * registre ne fournit de sujet, elle ne publie rien.
+ */
 
 const AGENT_LABEL = "LOU"
-const MAX_AGE_DAYS = 30
+const MODEL = "claude-sonnet-4-6"
 
-/** `datetime` MySQL : un ISO 8601 avec son « T » et son « Z » ne se compare pas. */
-function toMysqlDatetime(iso: string): string {
-  return iso.slice(0, 19).replace("T", " ")
+/** Articles éditoriaux gardés en rotation. Au-delà, un article n'est plus une
+ *  actualité — les guides de ville, eux, n'expirent pas. */
+const ARTICLES_MAX = 40
+
+export const maxDuration = 300
+
+/** Un guide de ville se reconnaît à son slug quand sa catégorie ne le dit pas. */
+function slugDeVille(slug: string): boolean {
+  return /^auto-e?coles-/.test(slug)
 }
 
 /**
@@ -34,7 +75,13 @@ function toMysqlDatetime(iso: string): string {
 function resume(html: string, max = 500): string {
   return html
     .replace(/<[^>]*>/g, " ")
-    .replace(/&(nbsp|amp|quot|#\d+|[a-z]+);/gi, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&rsquo;|&#8217;/g, "’")
+    .replace(/&#8211;|&ndash;/g, "–")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+    .replace(/&[a-z]+;/gi, " ")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, max)
@@ -61,138 +108,174 @@ export async function GET(req: Request) {
       )
     }
 
-    const since = new Date(Date.now() - MAX_AGE_DAYS * 24 * 3600_000).toISOString()
+    // La catégorie `villes` se résout par son slug, pas par un id figé : un id
+    // recopié d'un site à l'autre est exactement le genre de chose qui se
+    // périme sans prévenir.
+    const categories = await listCategories().catch(() => [])
+    const idVilles = categories.find((c) => c.slug === "villes")?.id
 
-    // 1. Tenter les articles publiés dans les 30 derniers jours.
-    let posts = await listPosts({
-      per_page: 30,
-      status: "publish",
-      after: since,
-      orderby: "date",
-      order: "desc",
-    })
-    let sourceWindow: "30j" | "recycle" = "30j"
+    const [recents, guides, historique, catalogue] = await Promise.all([
+      listPosts({ per_page: ARTICLES_MAX, status: "publish", orderby: "date", order: "desc" }).catch(
+        (e) => {
+          console.warn("[cron/social-auto] articles indisponibles:", e instanceof Error ? e.message : e)
+          return [] as WPPost[]
+        },
+      ),
+      idVilles
+        ? listPosts({
+            per_page: 100,
+            status: "publish",
+            categories: [idVilles],
+            orderby: "date",
+            order: "desc",
+          }).catch((e) => {
+            console.warn("[cron/social-auto] guides indisponibles:", e instanceof Error ? e.message : e)
+            return [] as WPPost[]
+          })
+        : Promise.resolve([] as WPPost[]),
+      getPublicationsRecentes(40),
+      fetchCatalogue(),
+    ])
 
-    // 2. Fallback : recycler les 30 derniers articles publiés si la production est en pause.
-    if (posts.length === 0) {
-      posts = await listPosts({ per_page: 30, status: "publish", orderby: "date", order: "desc" })
-      sourceWindow = "recycle"
-    }
-
-    if (posts.length === 0) {
-      return Response.json({ status: "ok", message: "Aucun article disponible à promouvoir", submitted: 0 })
-    }
-
-    const recents = posts
-      .filter((p) => p.date >= since)
-      .sort((a, b) => (a.date < b.date ? 1 : -1))
-
-    // Articles déjà promus cette fenêtre. L'ancienne requête lisait une colonne
-    // `meta_json` qui n'existe pas dans `wp_lou_social_posts` : elle levait à
-    // chaque passage, l'erreur était avalée, et LOU repromouvait indéfiniment
-    // les mêmes articles. On relit donc la colonne réellement écrite.
-    const promus = new Set<number>()
-    try {
-      const rows = await query<{ media_urls: string | null }>(
-        "SELECT media_urls FROM wp_lou_social_posts WHERE created_at >= ?",
-        [toMysqlDatetime(since)],
-      )
-      for (const row of rows) {
-        if (!row.media_urls) continue
-        try {
-          const meta = JSON.parse(row.media_urls) as { wp_post_id?: number; crome_post_id?: string | null }
-          // Promu veut dire « CROME OS l'a accepté », pas « on a essayé ». Sans
-          // cette condition, une semaine de hub injoignable consommerait tous
-          // les articles récents sans qu'aucun ne soit jamais publié.
-          if (meta?.wp_post_id && meta.crome_post_id) promus.add(meta.wp_post_id)
-        } catch {
-          // Ligne écrite avant ce format : elle ne dédoublonne rien, tant pis.
-        }
-      }
-    } catch (e) {
-      // Base injoignable : mieux vaut risquer un doublon que ne rien publier.
-      // CROME OS refuse de toute façon un texte identique dans les 24 h.
-      console.warn("[cron/social-auto] déduplication indisponible:", e instanceof Error ? e.message : e)
-    }
-
-    let article = recents.find((p) => !promus.has(p.id))
-
-    // Si tous les articles récents ont déjà été promus, recycler le plus récent
-    // pour éviter un canal à 0 publication quand la production est en pause.
-    if (!article && posts.length > 0) {
-      article = posts
-        .filter((p) => !promus.has(p.id))
-        .sort((a, b) => (a.date < b.date ? 1 : -1))[0]
-    }
-
-    if (!article) {
-      return Response.json({
-        status: "ok",
-        message: "Tous les articles disponibles ont déjà été promus",
-        submitted: 0,
+    // ── Les candidats ────────────────────────────────────────────────────────
+    //
+    // L'ordre d'arrivée sert de départage entre deux sujets jamais promus : le
+    // tri de la rotation est stable, et chaque registre est trié du plus
+    // récent au plus ancien. Un même article ne figure qu'une fois : un guide
+    // de ville récent est un guide, pas un article.
+    const candidats: Candidat[] = []
+    const vus = new Set<string>()
+    for (const p of [...recents, ...guides].sort((a, b) => (a.date < b.date ? 1 : -1))) {
+      if (p.status !== "publish" || !p.slug || vus.has(p.slug)) continue
+      vus.add(p.slug)
+      const ville = (idVilles != null && p.categories.includes(idVilles)) || slugDeVille(p.slug)
+      const titre = resume(p.title.rendered, 200)
+      candidats.push({
+        angle: ville ? "ville" : "article",
+        sujet: p.slug,
+        titre,
+        lien: p.link,
+        matiere: [
+          ville ? `Guide des auto-écoles d'une ville : ${titre}` : `Article du magazine : ${titre}`,
+          p.excerpt?.rendered ? `Résumé : ${resume(p.excerpt.rendered)}` : null,
+        ]
+          .filter(Boolean)
+          .join("\n"),
       })
     }
 
-    // Le catalogue vient du studio : LOU choisit une scène existante, elle n'en
-    // invente pas. Injoignable, la liste est vide et la scène par défaut
-    // s'appliquera.
-    const scenes = await fetchScenes()
-    const menuScenes = scenes.length
-      ? scenes.map((s) => `- ${s.key} : ${s.depicts}`).join("\n")
-      : "(catalogue indisponible — omets le champ scene)"
+    const choix = choisirSujet(candidats, historique)
+    if (!choix) {
+      return Response.json({ status: "ok", message: "Aucun article disponible à promouvoir", submitted: 0 })
+    }
+
+    // Le catalogue vient du studio : LOU choisit parmi ce qui existe, elle
+    // n'invente pas. Injoignable, les listes sont vides et le studio applique
+    // ses propres tirages.
+    const scenesDuMenu = catalogue.scenes.length
+      ? catalogue.scenes
+          .map(
+            (s) =>
+              `- ${s.key} : ${s.depicts}` +
+              (s.places?.length ? ` [lieux possibles : ${s.places.join(", ")}]` : ""),
+          )
+          .join("\n")
+      : "(catalogue indisponible — omets les champs de visuel)"
+
+    const aEviter = combinaisonsRecentes(historique)
+
+    const consigneRegistre =
+      choix.angle === "ville"
+        ? `Tu présentes le guide des auto-écoles d'une ville. La ville vient du
+titre ; tu ne cites aucune auto-école par son nom, aucun tarif, aucun taux de
+réussite, aucun nombre d'établissements — tu invites à consulter le guide.`
+        : `Tu donnes envie de lire UN article du magazine.`
 
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
-
     const response = await client.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 1000,
+      model: MODEL,
+      max_tokens: 1200,
       messages: [
         {
           role: "user",
           content: `Tu es ${AGENT_LABEL}, community manager d'Auto-école Magazine (autoecolemagazine.fr).
 
-Article à promouvoir :
-Titre : "${article.title.rendered}"
-Résumé : ${resume(article.content.rendered) || "(non disponible)"}
+Matière (ta seule source) :
+${choix.matiere}
 
-Rédige 1 post social qui donne envie de lire cet article, publiable tel quel
-sur une page professionnelle (Facebook ou LinkedIn — écris donc un texte qui
-fonctionne sur les deux : pas de « lien en bio », pas de format propre à un
-réseau).
+${consigneRegistre}
+
+Rédige 1 post social publiable tel quel sur une page professionnelle (Facebook
+ou LinkedIn — écris donc un texte qui fonctionne sur les deux : pas de « lien
+en bio », pas de format propre à un réseau).
 
 N'écris pas le lien dans ton texte : il sera ajouté juste en dessous.
 
-Choisis aussi le visuel qui accompagnera ce texte, parmi ces scènes :
-${menuScenes}
+Choisis aussi le visuel, en quatre axes.
+
+SCÈNES (ce que montre l'image) :
+${scenesDuMenu}
+
+LUMIÈRES :
+${menu(catalogue.lights)}
+
+STYLES :
+${menu(catalogue.styles)}
+
+LIEUX :
+${menu(catalogue.places)}
 
 Format JSON :
-{ "contenu": string, "hashtags": string[], "scene": string }
+{ "contenu": string, "hashtags": string[], "scene": string, "lumiere": string, "style": string, "lieu": string }
 
-Le champ "scene" doit être exactement l'une des clés ci-dessus, celle dont
-l'image illustre le mieux ton texte.
+Chaque valeur de visuel doit être exactement l'une des clés ci-dessus. Le lieu
+doit figurer parmi les « lieux possibles » de la scène retenue quand la scène en
+indique : il est ajouté devant le décor de la scène, donc une salle de code sur
+une rocade se contredit.
+${
+  aEviter
+    ? `
+NE REPRENDS PAS LE VISUEL DES DERNIERS POSTS. Voici ce qui vient d'être publié :
+${aEviter}
+
+Choisis autre chose — au minimum une lumière ET un style différents du dernier.
+Une page dont toutes les images se ressemblent se repère comme automatique.
+Reste juste par rapport au sujet : un visuel hors sujet serait pire qu'un visuel
+déjà vu.`
+    : ""
+}
 
 RÈGLE ABSOLUE — ce que tu n'as pas le droit d'affirmer.
-Ta seule source est le titre et le résumé ci-dessus. Tout le reste, tu ne le
-sais pas. N'écris donc jamais :
+Ta seule source est la matière ci-dessus. Tout le reste, tu ne le sais pas.
+N'écris donc jamais :
 - de chiffres, statistiques, pourcentages, tarifs ou délais qui ne figurent pas
-  dans le résumé,
-- de villes, de zones de couverture ou de nombre d'auto-écoles,
+  dans la matière,
+- de villes autres que celle de la matière, de zones de couverture ou de nombre
+  d'auto-écoles,
 - de dates, d'échéances ou de changements de réglementation,
-- de noms de partenaires, de clients ou d'entreprises.
+- de noms de partenaires, de clients, d'entreprises ou d'auto-écoles.
 Un post d'un agent voisin a déjà annoncé « Déjà actif à Strasbourg, Rennes,
 Lille » : c'était faux, inventé de toutes pièces, et il a fallu l'intercepter
 avant publication. Une seule affirmation fausse sur une page publique coûte
 plus cher que dix posts réussis ne rapportent. Dans le doute, reste sur ce que
-l'article dit et invite à le lire.
+la matière dit et invite à lire.
 
 Ton engageant et accessible. Cible : 17-25 ans. 100 à 200 caractères hors
-hashtags. 3 à 5 hashtags maximum, en français, sans mélange franglais.`,
+hashtags. 3 à 5 hashtags maximum, en français, sans mélange franglais. Au plus
+un émoji, ou aucun.`,
         },
       ],
     })
 
     const texte = response.content[0].type === "text" ? response.content[0].text : ""
-    let redige: { contenu?: string; hashtags?: string[]; scene?: string } | null = null
+    let redige: {
+      contenu?: string
+      hashtags?: string[]
+      scene?: string
+      lumiere?: string
+      style?: string
+      lieu?: string
+    } | null = null
     try {
       const bloc = texte.match(/\{[\s\S]*\}/)
       if (bloc) redige = JSON.parse(bloc[0])
@@ -203,53 +286,44 @@ hashtags. 3 à 5 hashtags maximum, en français, sans mélange franglais.`,
       return Response.json({ status: "error", error: "Réponse IA non parsable" }, { status: 502 })
     }
 
-    // Le hub n'ajoute aucun lien : il doit vivre dans le texte, sinon l'article
+    // Le hub n'ajoute aucun lien : il doit vivre dans le texte, sinon la page
     // qu'on promeut devient inatteignable depuis le post.
     const hashtags = (redige.hashtags ?? [])
       .map((h) => "#" + String(h).replace(/^#+/, "").trim())
       .filter((h) => h.length > 1)
-    const contenu = [redige.contenu.trim(), article.link, hashtags.join(" ")]
+    const contenu = [redige.contenu.trim(), choix.lien, hashtags.join(" ")]
       .filter(Boolean)
       .join("\n\n")
 
-    // Une scène hors catalogue serait refusée par le studio : on préfère laisser
-    // la valeur par défaut s'appliquer plutôt que perdre le visuel.
-    const choisie = redige.scene
-    const scene = scenes.some((s) => s.key === choisie) ? choisie : undefined
+    // Une clé hors catalogue serait refusée par le studio, et un lieu que la
+    // scène n'accepte pas produirait une image qui se contredit. Un axe écarté
+    // n'est pas remplacé par un défaut : laissé vide, le studio le tire au sort.
+    const visuel = visuelValide(redige, catalogue)
 
-    // L'image de l'article d'abord : elle montre le sujet réel, elle est déjà
-    // payée et déjà validée. Le studio n'intervient que si l'article n'en a pas.
-    let imageUrl: string | null = null
-    let imageOrigine: "article" | "studio" | null = null
-    let imageErreur: string | undefined
-
-    if (article.featured_media) {
-      imageUrl = (await getMediaUrl(article.featured_media).catch(() => null)) ?? null
-      if (imageUrl) imageOrigine = "article"
-    }
+    const media = await requestImage({
+      ...visuel,
+      format: formatPost(catalogue.formats),
+      // Le cadrage d'un post de fil : sujet unique, lisible en tout petit.
+      destination: "post_social",
+    })
+    const imageUrl = media.image_url ?? null
     if (!imageUrl) {
-      const media = await requestImage({ scene, destination: "post_social" })
-      if (media.image_url) {
-        imageUrl = media.image_url
-        imageOrigine = "studio"
-      } else {
-        imageErreur = media.error ?? media.reason ?? "inconnu"
-        console.warn("[cron/social-auto] pas de visuel:", imageErreur)
-      }
+      console.warn("[cron/social-auto] pas de visuel:", media.error ?? media.reason ?? "inconnu")
     }
 
     // CROME OS décide et publie.
     const resultat: SubmitResult = await submitPost(contenu, imageUrl ? [imageUrl] : [], reviewOnly)
 
-    // Trace locale — même quand CROME OS refuse ou est injoignable, le texte
-    // rédigé ne doit pas être perdu, et l'article doit compter comme promu pour
-    // que le prochain passage en choisisse un autre. Le statut dit ce qui s'est
-    // réellement passé, plutôt que « scheduled » quoi qu'il arrive.
-    const statut = resultat.published
-      ? "published"
-      : resultat.error
-        ? "error"
-        : "pending_review"
+    const visuelRetenu = {
+      scene: media.scene ?? visuel.scene ?? null,
+      lumiere: media.light ?? visuel.light ?? null,
+      style: media.style ?? visuel.style ?? null,
+      lieu: media.place ?? visuel.place ?? null,
+    }
+
+    // Trace locale, pour le calendrier du dashboard — même quand CROME OS
+    // refuse ou est injoignable, le texte rédigé ne doit pas être perdu.
+    const statut = resultat.published ? "published" : resultat.error ? "error" : "pending_review"
     try {
       await execute(
         `INSERT INTO wp_lou_social_posts (platform, scheduled_at, status, caption, media_urls)
@@ -258,10 +332,11 @@ hashtags. 3 à 5 hashtags maximum, en français, sans mélange franglais.`,
           statut,
           contenu,
           JSON.stringify({
-            wp_post_id: article.id,
-            link: article.link,
+            angle: choix.angle,
+            sujet: choix.sujet,
+            link: choix.lien,
             media: imageUrl,
-            media_source: imageOrigine,
+            media_source: imageUrl ? "studio" : null,
             crome_post_id: resultat.post_id ?? null,
           }),
         ],
@@ -273,25 +348,44 @@ hashtags. 3 à 5 hashtags maximum, en français, sans mélange franglais.`,
     if (resultat.error) {
       console.error("[cron/social-auto] soumission CROME OS:", resultat.error)
       return Response.json(
-        { status: "error", step: "crome_submit", error: resultat.error, wp_post_id: article.id },
+        { status: "error", step: "crome_submit", error: resultat.error, angle: choix.angle, sujet: choix.sujet },
         { status: 502 },
       )
     }
 
+    // Le sujet est consommé dès qu'il est SOUMIS, pas seulement s'il est publié :
+    // retenu pour quota ou mis en file de validation, il a quand même servi, et
+    // le reproposer au passage suivant recréerait la répétition.
+    //
+    // Les axes consignés sont ceux que le studio a réellement retenus : quand
+    // LOU en laisse un vide, c'est le studio qui tire, et sans son retour la
+    // mémoire ne saurait pas ce qui vient d'être montré.
+    await enregistrerPublication({
+      angle: choix.angle,
+      sujet: choix.sujet,
+      titre: choix.titre,
+      lien: choix.lien,
+      ...visuelRetenu,
+      post_id: resultat.post_id ?? null,
+    })
+
     return Response.json({
       status: "ok",
-      source: sourceWindow,
       submitted: 1,
-      wp_post_id: article.id,
+      angle: choix.angle,
+      sujet: choix.sujet,
+      titre: choix.titre,
+      lien: choix.lien,
       post_id: resultat.post_id,
       published: resultat.published ?? false,
       duplicate: resultat.duplicate ?? false,
+      // Le motif quand rien n'est parti : quota, fenêtre calme, palier…
       reason: resultat.reason,
       review_only: reviewOnly,
-      scene: scene ?? null,
+      visuel: visuelRetenu,
       image_url: imageUrl,
-      image_source: imageOrigine,
-      image_error: imageUrl ? undefined : imageErreur,
+      // Distinct de `null` sans explication : dire pourquoi il n'y a pas d'image.
+      image_error: imageUrl ? undefined : (media.error ?? media.reason),
     })
   } catch (err) {
     console.error("[cron/social-auto]", err instanceof Error ? err.message : err)

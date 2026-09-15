@@ -228,7 +228,7 @@ hashtags. 3 à 5 hashtags maximum, en français, sans mélange franglais.`,
       if (imageUrl) imageOrigine = "article"
     }
     if (!imageUrl) {
-      const media = await requestImage(scene)
+      const media = await requestImage({ scene, destination: "post_social" })
       if (media.image_url) {
         imageUrl = media.image_url
         imageOrigine = "studio"

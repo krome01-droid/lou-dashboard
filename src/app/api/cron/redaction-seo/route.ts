@@ -416,7 +416,16 @@ export async function GET(req: Request) {
       // un 9:16 illisible en tête d'article. Mais on ne le demande que si la
       // marque l'a : c'est en réclamant un 3:2 que cette marque n'avait pas que
       // le premier article de LOU est sorti sans vignette.
-      let media = await requestImage(scene, formatArticle(formats))
+      // Seules la scène et le format sont fixés. La lumière, le style et le lieu
+      // sont laissés au studio, qui les tire au sort parmi ceux que la scène
+      // accepte. Cinq couvertures identiques du 10 au 14/09/2026 : la scène
+      // `driving` était choisie chaque jour et fixait tout son décor — corrigé
+      // côté studio (axe lieu, six scènes de plus pour les sujets du magazine).
+      let media = await requestImage({
+        scene,
+        format: formatArticle(formats),
+        destination: "couverture_article",
+      })
       // L'attente du studio est bornée à 45 s et le 3:2 la dépasse presque
       // toujours : sans cette reprise, l'image aboutissait quelques secondes
       // après qu'on l'ait déclarée perdue.

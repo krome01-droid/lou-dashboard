@@ -30,6 +30,39 @@ export interface Scene {
   label: string
   /** Ce que la scène montre — c'est là-dessus qu'un modèle choisit, pas sur la clé. */
   depicts: string
+  /**
+   * Lieux compatibles avec cette scène. `null` = tous.
+   *
+   * Le lieu est préfixé au décor de la scène côté studio : choisir « route de
+   * campagne » pour une scène d'intérieur produit une image qui se contredit.
+   */
+  places?: string[] | null
+}
+
+/** Une valeur d'axe du catalogue — lumière, style, lieu, destination. */
+export interface Axe {
+  key: string
+  label: string
+  /** Présent sur les destinations : ce à quoi le cadrage sert. */
+  depicts?: string
+}
+
+/**
+ * Le catalogue complet d'une marque.
+ *
+ * Les trois axes autres que la scène ont longtemps manqué ici — le studio les
+ * définissait, le hub ne les transmettait pas. Un agent ne pouvait donc rien
+ * choisir d'autre que la scène, et ses images sortaient toutes avec la lumière,
+ * le style et le lieu par défaut de la marque : golden hour, lifestyle, circuit.
+ * Trois posts de MAYA d'affilée l'ont montré (10/09/2026).
+ */
+export interface Catalogue {
+  scenes: Scene[]
+  formats: string[]
+  lights: Axe[]
+  styles: Axe[]
+  places: Axe[]
+  destinations: Axe[]
 }
 
 export interface MediaResult {
@@ -42,6 +75,17 @@ export interface MediaResult {
   refused?: boolean
   reason?: string
   error?: string
+  /**
+   * Les axes que le studio a réellement retenus. Quand l'agent n'en fixe pas un,
+   * le studio le tire au sort : sans ce retour, l'agent ne sait pas ce qu'il
+   * vient de publier, donc ne peut pas éviter de le reproduire au passage
+   * suivant.
+   */
+  scene?: string | null
+  light?: string | null
+  style?: string | null
+  place?: string | null
+  destination?: string | null
   /**
    * Le détail rendu par le studio. Sans lui, un refus arrive sous la forme
    * « studio_erreur », qui ne dit pas quoi corriger : LOU a perdu la vignette de
@@ -80,8 +124,17 @@ function headers(): Record<string, string> {
  *
  * Injoignable, la liste est vide : le studio appliquera sa scène par défaut.
  */
-export async function fetchCatalogue(): Promise<{ scenes: Scene[]; formats: string[] }> {
-  if (!CROME_MEDIA_URL || !CROME_SECRET) return { scenes: [], formats: [] }
+const CATALOGUE_VIDE: Catalogue = {
+  scenes: [],
+  formats: [],
+  lights: [],
+  styles: [],
+  places: [],
+  destinations: [],
+}
+
+export async function fetchCatalogue(): Promise<Catalogue> {
+  if (!CROME_MEDIA_URL || !CROME_SECRET) return CATALOGUE_VIDE
   try {
     const res = await fetch(CROME_MEDIA_URL, {
       method: "POST",
@@ -89,7 +142,7 @@ export async function fetchCatalogue(): Promise<{ scenes: Scene[]; formats: stri
       body: JSON.stringify({ agent_id: AGENT_ID, mode: "catalog" }),
       signal: AbortSignal.timeout(20_000),
     })
-    if (!res.ok) return { scenes: [], formats: [] }
+    if (!res.ok) return CATALOGUE_VIDE
     const body = await res.json()
     return {
       scenes: (body.scenes ?? []) as Scene[],
@@ -97,9 +150,13 @@ export async function fetchCatalogue(): Promise<{ scenes: Scene[]; formats: stri
       // format qu'elle n'a pas fait échouer la génération entière — c'est ce qui
       // a privé de vignette le premier article de LOU.
       formats: (body.formats ?? []) as string[],
+      lights: (body.lights ?? []) as Axe[],
+      styles: (body.styles ?? []) as Axe[],
+      places: (body.places ?? []) as Axe[],
+      destinations: (body.destinations ?? []) as Axe[],
     }
   } catch {
-    return { scenes: [], formats: [] }
+    return CATALOGUE_VIDE
   }
 }
 
@@ -123,14 +180,47 @@ export function formatArticle(formats: string[]): string {
 }
 
 /**
+ * Le format d'un visuel de post social.
+ *
+ * 4:5 d'abord : c'est le format qui occupe le plus de hauteur dans un fil
+ * Facebook ou Instagram, donc celui qui se voit. 1:1 était le défaut historique
+ * de `requestImage` — un défaut de fonction, pas un choix éditorial.
+ */
+export function formatPost(formats: string[]): string {
+  for (const voulu of ["4:5", "1:1"]) {
+    if (formats.includes(voulu)) return voulu
+  }
+  return formats[0] ?? "1:1"
+}
+
+/**
  * Demande un visuel de marque. Une image manquante ne doit jamais empêcher un
  * post de partir : l'appelant traite le résultat comme un bonus.
  *
  * On ne transmet aucune consigne libre tirée de l'article : le prompt de marque
  * proscrit déjà le texte lisible dans l'image, et y réinjecter un titre
  * ferait réapparaître les lettrages inventés que cette contrainte élimine.
+ *
+ * Les quatre axes du visuel sont facultatifs, et c'est voulu : celui qu'on ne
+ * fixe pas, le studio le tire au sort. Ne rien fixer du tout donnait autrefois
+ * la valeur PAR DÉFAUT de la marque à chaque appel — golden hour, lifestyle,
+ * circuit — et c'est ce qui rendait toutes les images d'un agent identiques.
  */
-export async function requestImage(scene?: string, format = "1:1"): Promise<MediaResult> {
+export interface DemandeVisuel {
+  scene?: string
+  format?: string
+  /** Heure et qualité de lumière. Omise, le studio en tire une au sort. */
+  light?: string
+  /** Traitement photographique. Omis, le studio en tire un au sort. */
+  style?: string
+  /** Décor. Omis, le studio le tire parmi ceux que la scène accepte. */
+  place?: string
+  /** Cadrage selon l'emplacement d'arrivée : couverture d'article, post de fil… */
+  destination?: string
+}
+
+export async function requestImage(demande: DemandeVisuel = {}): Promise<MediaResult> {
+  const format = demande.format ?? "1:1"
   if (!CROME_MEDIA_URL || !CROME_SECRET) return { error: "CROME_INGEST_URL absent" }
   try {
     const res = await fetch(CROME_MEDIA_URL, {
@@ -138,7 +228,16 @@ export async function requestImage(scene?: string, format = "1:1"): Promise<Medi
       headers: headers(),
       // `wait` : on veut l'URL avant de soumettre le post, sinon il partirait
       // sans son image et rien ne viendrait la raccrocher ensuite.
-      body: JSON.stringify({ agent_id: AGENT_ID, scene, format, wait: true }),
+      body: JSON.stringify({
+        agent_id: AGENT_ID,
+        scene: demande.scene,
+        format,
+        light: demande.light,
+        style: demande.style,
+        place: demande.place,
+        destination: demande.destination,
+        wait: true,
+      }),
       signal: AbortSignal.timeout(90_000),
     })
     const body = (await res.json().catch(() => ({}))) as MediaResult

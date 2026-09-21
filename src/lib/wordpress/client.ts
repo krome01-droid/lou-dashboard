@@ -93,6 +93,13 @@ export async function getPost(id: number): Promise<WPPost> {
   return wpFetch<WPPost>(`/posts/${id}`)
 }
 
+/** Un article par son slug, publié ou en brouillon. `null` s'il n'existe pas. */
+export async function getPostBySlug(slug: string): Promise<WPPost | null> {
+  const qs = new URLSearchParams({ slug, status: "publish,draft", per_page: "1" })
+  const posts = await wpFetch<WPPost[]>(`/posts?${qs}`)
+  return posts[0] ?? null
+}
+
 /**
  * Le contenu tel qu'il est STOCKÉ, pas tel qu'il est rendu.
  *

@@ -20,6 +20,7 @@ import {
   listerVilles,
   dossierVille,
   normaliser,
+  slugifier,
   MIN_AUTO_ECOLES,
   type VilleAnnuaire,
   type DossierVille,
@@ -74,30 +75,44 @@ function texteNu(html: string): string {
 
 /**
  * Les villes qui ont déjà leur guide. Un guide se reconnaît à sa catégorie
- * « villes » ou à son slug (`auto-ecoles-…`, `les-auto-ecoles-de-…`) — les deux
- * registres coexistent depuis mai. La ville est reconnue si son nom normalisé
- * apparaît dans le slug ou le titre : « Auto-école Le Mans (72) — … » couvre
- * « lemans ».
+ * « villes » ou à son slug au PLURIEL (`auto-ecoles-…`, `les-auto-ecoles-de-…`),
+ * les deux registres coexistant depuis mai. Le singulier n'en est pas un :
+ * « auto-ecole-a-metz-bien-choisir » est un article ancien, pas un comparatif,
+ * et le premier essai (21/09/2026) comptait 105 villes couvertes pour cette
+ * raison — Caen, Nancy, Metz, Tours en tête.
+ *
+ * On compare des MOTS de slug, pas des sous-chaînes : « toul » est dans
+ * « toulouse », et Toul (54) passait pour couverte par le guide de Toulouse.
  */
-function villesCouvertes(posts: WPPost[], categorieId: number | null): Set<string> {
+function villesCouvertes(posts: WPPost[], categorieId: number | null): string[][] {
   const guides = posts.filter(
     (p) =>
       (categorieId !== null && p.categories?.includes(categorieId)) ||
-      /^(les-)?auto-ecoles?-/.test(p.slug),
+      /^(les-)?auto-ecoles-/.test(p.slug),
   )
-  const empreintes = new Set<string>()
+  const empreintes: string[][] = []
   for (const g of guides) {
-    empreintes.add(normaliser(g.slug))
-    empreintes.add(normaliser(texteNu(g.title.rendered)))
+    empreintes.push(g.slug.split("-").filter(Boolean))
+    empreintes.push(slugifier(texteNu(g.title.rendered)).split("-").filter(Boolean))
   }
   return empreintes
 }
 
-function estCouverte(v: VilleAnnuaire, empreintes: Set<string>): boolean {
-  const cle = normaliser(v.nom)
-  if (cle.length < 4) return false
-  for (const e of empreintes) if (e.includes(cle)) return true
+function contientSequence(mots: string[], sequence: string[]): boolean {
+  if (sequence.length === 0 || sequence.length > mots.length) return false
+  for (let i = 0; i + sequence.length <= mots.length; i++) {
+    let ok = true
+    for (let j = 0; j < sequence.length; j++) {
+      if (mots[i + j] !== sequence[j]) { ok = false; break }
+    }
+    if (ok) return true
+  }
   return false
+}
+
+function estCouverte(v: VilleAnnuaire, empreintes: string[][]): boolean {
+  const sequence = slugifier(v.nom).split("-").filter(Boolean)
+  return empreintes.some((mots) => contientSequence(mots, sequence))
 }
 
 function formatNote(f: FicheAutoEcole): string {
@@ -338,7 +353,9 @@ export async function GET(req: Request) {
         maillage: rapportMaillage,
         longueur_html: contenu.length, nb_faq: article.faq?.length ?? 0,
         tableau_lignes: Math.min(dossier.nb, TABLEAU_MAX),
-        apercu: texteNu(article.corps_html).slice(0, 600),
+        // Le HTML entier : un essai sert à juger l'article, pas seulement à
+        // savoir qu'il existe.
+        contenu,
       })
     }
 

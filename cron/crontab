@@ -62,3 +62,20 @@
 # rédaction sur le même conteneur ; et les nouveaux articles de la veille sont
 # déjà dans la liste des cibles possibles.
 0 5 * * * /usr/local/bin/call-cron.sh maillage-interne
+
+# Guides de ville — TROIS par nuit, à 3h20, 4h00 et 4h40.
+#
+# Branché le 21/09/2026. Armel : « ce type d'article fonctionne bien
+# (auto-ecoles-le-mans), fais des articles comme ça sur toutes les villes
+# importantes en France ». Chaque appel traite UNE ville — la plus fournie de
+# l'annuaire qui n'a pas encore son guide (221 villes de métropole à 12 fiches
+# ou plus, dont ~18 déjà couvertes). Un guide prend 6 à 9 minutes : rédaction
+# par le hub, maillage, couverture — d'où trois appels espacés plutôt qu'un
+# appel de trois, que le `--max-time 600` du wrapper couperait.
+#
+# Avant `maillage-interne` (5h) : le guide de la nuit est déjà dans la liste des
+# cibles quand les anciens articles se font mailler. `?ville=` et `?dry_run=1`
+# servent aux essais ; `?liste=1` montre la file sans rien rédiger.
+20 3 * * * /usr/local/bin/call-cron.sh guide-ville
+0 4 * * * /usr/local/bin/call-cron.sh guide-ville
+40 4 * * * /usr/local/bin/call-cron.sh guide-ville

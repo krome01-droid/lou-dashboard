@@ -282,6 +282,46 @@ export const RUBRIQUES: Rubrique[] = [
 /** La rubrique par défaut : un article d'actualité reste une actualité. */
 export const RUBRIQUE_PAR_DEFAUT = "Actualités"
 
+/** Ce qu'il faut d'une catégorie WordPress pour la reconnaître. */
+export interface TermeWP {
+  id: number
+  name: string
+  slug: string
+}
+
+/**
+ * Retrouve une catégorie par son NOM, à la casse et aux accents près, et par
+ * son slug. Ne surtout pas la chercher par un slug DÉDUIT du nom : le site
+ * range « Actualités » sous `actualites-auto-ecole`.
+ */
+export function trouverCategorie<T extends TermeWP>(cats: T[], nom: string): T | null {
+  const cible = normaliserTerme(nom)
+  return (
+    cats.find((c) => normaliserTerme(c.name) === cible) ??
+    cats.find((c) => c.slug === nom || normaliserTerme(c.slug) === cible) ??
+    null
+  )
+}
+
+/**
+ * La catégorie du site qui porte une rubrique. À préférer à `trouverCategorie`
+ * dès qu'on part d'un nom de RUBRIQUE : le site porte deux catégories dont le
+ * nom se normalise pareil — « Comparatifs » (id 7, 14 articles) et le doublon
+ * `comparatifs` (id 102, 1 article) fabriqué par le défaut de septembre. Une
+ * recherche par le nom seul rend celle que l'API liste en premier, c'est-à-dire
+ * le hasard ; les slugs déclarés dans `RUBRIQUES` tranchent, le premier étant
+ * la rubrique établie.
+ */
+export function categorieDeRubrique<T extends TermeWP>(cats: T[], nom: string): T | null {
+  const cible = normaliserTerme(nom)
+  const definition = RUBRIQUES.find((r) => normaliserTerme(r.nom) === cible)
+  for (const slug of definition?.slugs ?? []) {
+    const trouvee = cats.find((c) => c.slug === slug)
+    if (trouvee) return trouvee
+  }
+  return trouverCategorie(cats, nom)
+}
+
 export interface Classement {
   /** Nom de la rubrique retenue, tel qu'il doit exister dans WordPress. */
   rubrique: string

@@ -2,11 +2,14 @@ import {
   listPosts,
   listCategories,
   updatePost,
-  trouverCategorie,
   type WPPost,
   type WPTerm,
 } from "@/lib/wordpress/client"
-import { classerArticle, RUBRIQUE_PAR_DEFAUT } from "@/lib/wordpress/rubriques"
+import {
+  categorieDeRubrique,
+  classerArticle,
+  RUBRIQUE_PAR_DEFAUT,
+} from "@/lib/wordpress/rubriques"
 
 // Rattrapage du classement des articles d'autoecolemagazine.fr.
 //
@@ -116,7 +119,7 @@ export async function GET(req: Request) {
             extrait: texteNu(post.excerpt?.rendered ?? ""),
           })
 
-      const categorie = trouverCategorie(categories, classement.rubrique)
+      const categorie = categorieDeRubrique(categories, classement.rubrique)
 
       // Une rubrique que le site ne porte pas n'est pas créée ici : cette tâche
       // range, elle ne redessine pas la taxonomie. On le dit et on passe.

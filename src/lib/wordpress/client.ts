@@ -1,5 +1,5 @@
 import { extractJson } from "@/lib/utils"
-import { normaliserTerme } from "@/lib/wordpress/rubriques"
+import { categorieDeRubrique, trouverCategorie } from "@/lib/wordpress/rubriques"
 
 const WP_URL = () => process.env.WP_URL!
 const WP_AUTH = () =>
@@ -284,26 +284,16 @@ export async function listCategories(): Promise<WPTerm[]> {
   return wpFetch<WPTerm[]>("/categories?per_page=100")
 }
 
-/**
- * Retrouve une catégorie par son NOM, à la casse et aux accents près, et par
- * son slug. Ne surtout pas la chercher par un slug DÉDUIT du nom : le site
- * range « Actualités » sous `actualites-auto-ecole` et « Comparatifs » sous
- * `comparatifs-auto-ecole`. C'est cette déduction qui, à partir du 1er
- * septembre 2026, a envoyé 13 articles en « Non classé » et fabriqué un
- * doublon `comparatifs` (id 102) à côté de la vraie rubrique.
- */
-export function trouverCategorie(cats: WPTerm[], nom: string): WPTerm | null {
-  const cible = normaliserTerme(nom)
-  return (
-    cats.find((c) => normaliserTerme(c.name) === cible) ??
-    cats.find((c) => c.slug === nom || normaliserTerme(c.slug) === cible) ??
-    null
-  )
-}
+// La résolution d'une catégorie vit dans `rubriques.ts`, avec la taxonomie
+// qu'elle sert : c'est cette déduction d'un slug à partir du nom d'affichage
+// (« Actualités » → `actualites`, quand le site range sous
+// `actualites-auto-ecole`) qui, à partir du 1er septembre 2026, a envoyé 13
+// articles en « Non classé » et fabriqué un doublon `comparatifs`.
+export { trouverCategorie }
 
 export async function findOrCreateCategory(name: string): Promise<number> {
   const cats = await listCategories()
-  const existing = trouverCategorie(cats, name)
+  const existing = categorieDeRubrique(cats, name)
   if (existing) return existing.id
 
   try {

@@ -147,8 +147,18 @@ export async function GET(req: Request) {
       // On retire « Non classé » et on garde les autres rubriques déjà posées :
       // un article peut légitimement en porter deux, et ce n'est pas le rôle de
       // ce passage d'en enlever une.
+      //
+      // Sauf quand l'appel IMPOSE une rubrique sur un article NOMMÉ : là,
+      // quelqu'un a décidé où va cet article, et laisser l'ancienne rubrique à
+      // côté ne ferait pas le déménagement demandé. C'est ce qui sort un
+      // article d'une rubrique en double sans passer par l'interface.
       const autres = (post.categories ?? []).filter((c) => c !== NON_CLASSE)
-      const voulues = autres.includes(categorie.id) ? autres : [...autres, categorie.id]
+      const voulues =
+        rubriqueImposee && slugImpose
+          ? [categorie.id]
+          : autres.includes(categorie.id)
+            ? autres
+            : [...autres, categorie.id]
 
       const dejaBon =
         voulues.length === (post.categories ?? []).length &&

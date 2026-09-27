@@ -29,7 +29,9 @@ export async function GET(req: Request) {
 
     const response = await client.messages.create({
       model: "claude-sonnet-4-6",
-      max_tokens: 1500,
+      max_tokens: 4000,
+      tools: [OUTIL_RAPPORT],
+      tool_choice: { type: "tool", name: "rendre_rapport_seo" },
       messages: [
         {
           role: "user",
@@ -43,28 +45,32 @@ Nouveaux cette semaine : ${newThisWeek}
 Articles (20 derniers) :
 ${postsSummary}
 
-Genere un rapport avec :
-1. Score SEO estime (0-100) base sur la couverture thematique, la frequence de publication, et la qualite des titres/slugs
-2. Top 3 forces
-3. Top 3 faiblesses
-4. 5 recommandations concretes pour la semaine prochaine
-5. Idees d'articles a fort potentiel SEO
-
-Reponds en JSON : {
-  "score": number,
-  "strengths": [string],
-  "weaknesses": [string],
-  "recommendations": [string],
-  "article_ideas": [{ "title": string, "keyword": string, "estimated_volume": string }],
-  "summary": string
-}`,
+Rends le rapport en appelant l'outil rendre_rapport_seo, et rien d'autre. C'est une note hebdomadaire : trois forces, trois faiblesses, cinq recommandations et cinq idees d'articles au plus, UNE phrase par element.`,
         },
       ],
     })
 
-    const responseText = response.content[0].type === "text" ? response.content[0].text : ""
-
-    let report: {
+    // Rapport rendu par outil forcé, comme la veille. Le JSON libre plafonné à
+    // 1500 tokens était coupé en plein objet et la route ne disait que
+    // « Impossible de générer le rapport » (27/09/2026), sans la cause. Les
+    // listes sont bornées dans le schéma ; une coupure est désormais nommée.
+    if (response.stop_reason === "max_tokens") {
+      return Response.json(
+        {
+          status: "error",
+          error: `Rapport coupé à max_tokens (${response.usage.output_tokens} tokens produits)`,
+        },
+        { status: 502 },
+      )
+    }
+    const toolUse = response.content.find((c) => c.type === "tool_use")
+    if (!toolUse || toolUse.type !== "tool_use") {
+      return Response.json(
+        { status: "error", error: `Réponse sans tool_use (stop_reason: ${response.stop_reason})` },
+        { status: 502 },
+      )
+    }
+    const report = toolUse.input as {
       score: number
       strengths: string[]
       weaknesses: string[]
@@ -73,15 +79,6 @@ Reponds en JSON : {
       summary: string
     }
 
-    try {
-      const jsonMatch = responseText.match(/\{[\s\S]*\}/)
-      if (!jsonMatch) throw new Error("No JSON")
-      report = JSON.parse(jsonMatch[0])
-    } catch {
-      return Response.json({ status: "error", error: "Impossible de generer le rapport" }, { status: 500 })
-    }
-
-    // Save report to DB
     const periodEnd = new Date()
     const periodStart = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
 
@@ -123,4 +120,42 @@ Reponds en JSON : {
       { status: 500 },
     )
   }
+}
+
+const OUTIL_RAPPORT: Anthropic.Tool = {
+  name: "rendre_rapport_seo",
+  description: "Enregistre le rapport SEO hebdomadaire.",
+  input_schema: {
+    type: "object",
+    properties: {
+      score: {
+        type: "number",
+        description: "Score SEO estimé sur 100 : couverture thématique, fréquence de publication, qualité des titres/slugs, longueur des contenus.",
+      },
+      strengths: { type: "array", maxItems: 3, description: "Trois forces au plus, UNE phrase chacune.", items: { type: "string" } },
+      weaknesses: { type: "array", maxItems: 3, description: "Trois faiblesses au plus, UNE phrase chacune.", items: { type: "string" } },
+      recommendations: {
+        type: "array",
+        maxItems: 5,
+        description: "Cinq recommandations concrètes au plus pour la semaine prochaine, UNE phrase chacune.",
+        items: { type: "string" },
+      },
+      article_ideas: {
+        type: "array",
+        maxItems: 5,
+        description: "Cinq idées d'articles à fort potentiel SEO au plus.",
+        items: {
+          type: "object",
+          properties: {
+            title: { type: "string" },
+            keyword: { type: "string" },
+            estimated_volume: { type: "string" },
+          },
+          required: ["title", "keyword", "estimated_volume"],
+        },
+      },
+      summary: { type: "string", description: "Deux ou trois phrases." },
+    },
+    required: ["score", "strengths", "weaknesses", "recommendations", "article_ideas", "summary"],
+  },
 }

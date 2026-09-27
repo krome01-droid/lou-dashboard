@@ -128,6 +128,8 @@ export async function getPostRaw(
 
 export async function listPosts(params: {
   search?: string
+  /** Un slug exact. WordPress ne le trouve PAS par `search` : `search` cherche dans le texte. */
+  slug?: string
   per_page?: number
   status?: string
   page?: number
@@ -139,6 +141,7 @@ export async function listPosts(params: {
 }): Promise<WPPost[]> {
   const qs = new URLSearchParams()
   if (params.search) qs.set("search", params.search)
+  if (params.slug) qs.set("slug", params.slug)
   if (params.categories?.length) qs.set("categories", params.categories.join(","))
   qs.set("per_page", String(params.per_page ?? 10))
   if (params.status) qs.set("status", params.status)

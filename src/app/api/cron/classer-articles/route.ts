@@ -100,10 +100,13 @@ export async function GET(req: Request) {
 
     const cibles = slugImpose
       ? await listPosts({
-          search: slugImpose,
+          // `slug=`, pas `search=` : `search` cherche dans le TEXTE de l'article
+          // et ne trouve pas un slug — le passage rendait « 0 article examiné »
+          // sur un article qui existe.
+          slug: slugImpose,
           status: "publish,draft,pending,future,private",
-          per_page: 20,
-        }).then((posts) => posts.filter((p) => p.slug === slugImpose))
+          per_page: 5,
+        })
       : await articlesNonClasses(max)
 
     const traites: Traite[] = []
@@ -178,14 +181,16 @@ export async function GET(req: Request) {
     }
 
     // Ce qui reste en « Non classé » après ce passage : c'est le chiffre qui dit
-    // si la file avance, et le seul à surveiller dans le journal du cron.
-    const restants = dryRun
-      ? cibles.length
-      : (await listPosts({
-          categories: [NON_CLASSE],
-          status: "publish,draft,pending,future,private",
-          per_page: 100,
-        })).length
+    // si la file avance, et le seul à surveiller dans le journal du cron. Il est
+    // relu même en `dry_run` — c'est une lecture, et rendre la taille des cibles
+    // à la place ferait dire « 0 en retard » à un passage sur un seul article.
+    const restants = (
+      await listPosts({
+        categories: [NON_CLASSE],
+        status: "publish,draft,pending,future,private",
+        per_page: 100,
+      })
+    ).length
 
     return Response.json({
       status: "ok",

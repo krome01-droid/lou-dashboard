@@ -79,3 +79,17 @@
 20 3 * * * /usr/local/bin/call-cron.sh guide-ville
 0 4 * * * /usr/local/bin/call-cron.sh guide-ville
 40 4 * * * /usr/local/bin/call-cron.sh guide-ville
+
+# Classement des articles — TOUS LES JOURS à 5h50.
+#
+# Branché le 27/09/2026. Armel, capture de la page d'accueil à l'appui : « il
+# faut que tous les articles soient classés ». Quatre des cinq derniers articles
+# portaient la vignette « Non classé ». La cause était dans `findOrCreateCategory`
+# (catégorie cherchée par un slug déduit de son nom) : corrigée. Ce passage
+# rattrape ce qu'elle a laissé, et sert ensuite de filet — un article sans
+# rubrique n'est atteignable par aucun chemin de navigation du site.
+#
+# 5h50 : après la rédaction de la nuit (3h20-4h40), après le maillage (5h), et
+# avant la rédaction d'actualité de 8h30. Aucun appel de modèle : le passage
+# dure quelques secondes et ne coûte rien, même quand il n'a rien à faire.
+50 5 * * * /usr/local/bin/call-cron.sh classer-articles

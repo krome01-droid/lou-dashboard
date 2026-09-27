@@ -16,6 +16,7 @@ import {
   type ArticleRedige,
   type CandidatLien,
 } from "@/lib/crome/client"
+import { classerArticle } from "@/lib/wordpress/rubriques"
 import { getTopKeywords } from "@/lib/google/search-console"
 import { query, execute } from "@/lib/db/connection"
 
@@ -42,8 +43,13 @@ import { query, execute } from "@/lib/db/connection"
 /** Longueur visée. En deçà, un article se fait mal citer ; au-delà, il se dilue. */
 const LONGUEUR = 1300
 
-/** La catégorie où atterrissent les articles écrits par la machine. */
-const CATEGORIE = "Actualités"
+/**
+ * La rubrique est choisie par les règles de `lib/wordpress/rubriques.ts`, à
+ * partir du titre et du slug de l'article. Verser toute la production dans
+ * « Actualités » rendait la navigation par rubrique illisible : un article sur
+ * le CPF et un sur les ZFE n'ont pas le même lecteur. « Actualités » reste le
+ * défaut quand rien de plus précis ne ressort.
+ */
 
 /**
  * Au-delà, une idée de veille n'est plus une actualité : la publier la
@@ -473,7 +479,25 @@ export async function GET(req: Request) {
     }
 
     // Une catégorie absente ne doit pas coûter l'article : on dépose sans.
-    const categorie = await findOrCreateCategory(CATEGORIE).catch(() => null)
+    // Mais on ne se tait pas non plus — c'est un `.catch(() => null)` muet qui a
+    // laissé 13 articles partir en « Non classé » pendant tout septembre 2026,
+    // sans que rien nulle part n'en porte la trace.
+    const classement = classerArticle({
+      titre: article.titre,
+      slug: article.slug,
+      extrait: article.meta_description,
+    })
+    let categorie: number | null = null
+    let categorieErreur: string | undefined
+    try {
+      categorie = await findOrCreateCategory(classement.rubrique)
+    } catch (e) {
+      categorieErreur = e instanceof Error ? e.message : String(e)
+      console.error(
+        `[cron/redaction-seo] rubrique « ${classement.rubrique} » introuvable :`,
+        categorieErreur,
+      )
+    }
 
     const depose = await createPost({
       title: article.titre,
@@ -526,6 +550,15 @@ export async function GET(req: Request) {
       bloquants: verdict.bloquants,
       mineurs: verdict.mineurs,
       jsonld_conserve: jsonldConserve,
+      rubrique: {
+        nom: classement.rubrique,
+        id: categorie,
+        score: classement.score,
+        second: classement.second?.rubrique ?? null,
+        // Comme `image_error` : dire pourquoi l'article part sans rubrique
+        // plutôt que de laisser un `null` qu'aucun journal ne relèvera.
+        erreur: categorieErreur,
+      },
       maillage: rapportMaillage,
       image_url: imageUrl,
       // Distinct d'un `null` muet : dire pourquoi il n'y a pas de vignette.

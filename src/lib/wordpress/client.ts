@@ -1,4 +1,5 @@
 import { extractJson } from "@/lib/utils"
+import { normaliserTerme } from "@/lib/wordpress/rubriques"
 
 const WP_URL = () => process.env.WP_URL!
 const WP_AUTH = () =>
@@ -273,7 +274,7 @@ export async function getMediaSizes(mediaId: number): Promise<MediaSizes | null>
 
 // --- Categories ---
 
-interface WPTerm {
+export interface WPTerm {
   id: number
   name: string
   slug: string
@@ -283,19 +284,60 @@ export async function listCategories(): Promise<WPTerm[]> {
   return wpFetch<WPTerm[]>("/categories?per_page=100")
 }
 
+/**
+ * Retrouve une catégorie par son NOM, à la casse et aux accents près, et par
+ * son slug. Ne surtout pas la chercher par un slug DÉDUIT du nom : le site
+ * range « Actualités » sous `actualites-auto-ecole` et « Comparatifs » sous
+ * `comparatifs-auto-ecole`. C'est cette déduction qui, à partir du 1er
+ * septembre 2026, a envoyé 13 articles en « Non classé » et fabriqué un
+ * doublon `comparatifs` (id 102) à côté de la vraie rubrique.
+ */
+export function trouverCategorie(cats: WPTerm[], nom: string): WPTerm | null {
+  const cible = normaliserTerme(nom)
+  return (
+    cats.find((c) => normaliserTerme(c.name) === cible) ??
+    cats.find((c) => c.slug === nom || normaliserTerme(c.slug) === cible) ??
+    null
+  )
+}
+
 export async function findOrCreateCategory(name: string): Promise<number> {
   const cats = await listCategories()
-  const existing = cats.find(
-    (c) => c.slug === name.toLowerCase().replace(/\s+/g, "-"),
-  )
+  const existing = trouverCategorie(cats, name)
   if (existing) return existing.id
 
-  const created = await wpFetch<WPTerm>("/categories", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name }),
-  })
-  return created.id
+  try {
+    const created = await wpFetch<WPTerm>("/categories", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    })
+    return created.id
+  } catch (e) {
+    // WordPress refuse un doublon de NOM par un 400 `term_exists` — et donne
+    // dans l'erreur l'identifiant du terme existant. C'est une résolution, pas
+    // un échec : le traiter comme un échec, c'est déposer l'article sans
+    // catégorie alors que la bonne rubrique existe déjà.
+    const existantId = idDansErreurTermExists(e)
+    if (existantId !== null) return existantId
+    throw e
+  }
+}
+
+/** L'id que WordPress glisse dans son erreur `term_exists`, ou `null`. */
+function idDansErreurTermExists(e: unknown): number | null {
+  const message = e instanceof Error ? e.message : String(e)
+  if (!message.includes("term_exists")) return null
+  try {
+    const corps = JSON.parse(extractJson(message)) as {
+      data?: { term_id?: number }
+      additional_data?: { term_id?: number }[]
+    }
+    const id = corps.data?.term_id ?? corps.additional_data?.[0]?.term_id
+    return typeof id === "number" ? id : null
+  } catch {
+    return null
+  }
 }
 
 // --- Full site content audit ---

@@ -2,6 +2,7 @@ import {
   listPosts,
   listCategories,
   updatePost,
+  deleteCategory,
   type WPPost,
   type WPTerm,
 } from "@/lib/wordpress/client"
@@ -75,6 +76,57 @@ async function articlesNonClasses(max: number): Promise<WPPost[]> {
   return posts.slice(0, max)
 }
 
+/**
+ * Supprime une catégorie FANTÔME : une rubrique en double, vidée de ses
+ * articles, que la taxonomie du site continue d'afficher. C'est le seul geste
+ * destructeur de cette route, et il est borné par trois refus.
+ *
+ * Le garde-fou qui compte est le troisième : WordPress, quand on supprime une
+ * catégorie, **reverse ses articles dans la catégorie par défaut** — c'est-à-dire
+ * « Non classé ». Supprimer une rubrique pleine reviendrait donc à refabriquer
+ * exactement le défaut que cette tâche répare. On ne supprime que le vide, et le
+ * comptage regarde TOUS les statuts : un brouillon compte autant qu'un publié.
+ */
+async function supprimerRubriqueVide(
+  categories: WPTerm[],
+  slug: string,
+  dryRun: boolean,
+) {
+  const cible = categories.find((c) => c.slug === slug)
+  if (!cible) {
+    return { status: "error", motif: "rubrique_introuvable", slug, supprimee: false }
+  }
+  if (cible.id === NON_CLASSE) {
+    return { status: "error", motif: "categorie_par_defaut_indestructible", slug, supprimee: false }
+  }
+
+  const occupants = await listPosts({
+    categories: [cible.id],
+    status: "publish,draft,pending,future,private",
+    per_page: 100,
+  })
+  if (occupants.length > 0) {
+    return {
+      status: "error",
+      motif: "rubrique_non_vide",
+      slug,
+      id: cible.id,
+      articles: occupants.length,
+      exemples: occupants.slice(0, 5).map((p) => p.slug),
+      supprimee: false,
+    }
+  }
+
+  if (dryRun) {
+    return { status: "ok", dry_run: true, slug, id: cible.id, nom: cible.name, supprimee: false }
+  }
+
+  // `force=true` : WordPress ne met pas un terme à la corbeille, il refuse la
+  // suppression sans ce drapeau.
+  await deleteCategory(cible.id)
+  return { status: "ok", dry_run: false, slug, id: cible.id, nom: cible.name, supprimee: true }
+}
+
 export async function GET(req: Request) {
   if (req.headers.get("Authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
     return Response.json({ error: "Unauthorized" }, { status: 401 })
@@ -87,6 +139,8 @@ export async function GET(req: Request) {
   const slugImpose = params.get("slug") ?? undefined
   // `?rubrique=` : forcer la rubrique, quand la règle se trompe sur un cas.
   const rubriqueImposee = params.get("rubrique") ?? undefined
+  // `?supprimer_rubrique_vide=<slug>` : retirer une catégorie fantôme.
+  const rubriqueASupprimer = params.get("supprimer_rubrique_vide") ?? undefined
   const max = Math.min(
     Math.max(Number(params.get("max") ?? MAX_PAR_PASSAGE) || MAX_PAR_PASSAGE, 1),
     100,
@@ -97,6 +151,10 @@ export async function GET(req: Request) {
     // liste, chaque rubrique paraîtrait absente et on les recréerait toutes en
     // doublon — exactement le défaut qu'on répare.
     const categories: WPTerm[] = await listCategories()
+
+    if (rubriqueASupprimer) {
+      return Response.json(await supprimerRubriqueVide(categories, rubriqueASupprimer, dryRun))
+    }
 
     const cibles = slugImpose
       ? await listPosts({

@@ -294,6 +294,18 @@ export async function listCategories(): Promise<WPTerm[]> {
 // articles en « Non classé » et fabriqué un doublon `comparatifs`.
 export { trouverCategorie }
 
+/**
+ * Supprime une catégorie. `force=true` est obligatoire : WordPress ne met pas
+ * un terme à la corbeille et refuse la suppression sans ce drapeau.
+ *
+ * ⚠️ WordPress reverse les articles d'une catégorie supprimée dans la catégorie
+ * par défaut (« Non classé »). L'appelant doit donc s'assurer qu'elle est vide —
+ * c'est ce que fait `supprimerRubriqueVide()` dans la tâche `classer-articles`.
+ */
+export async function deleteCategory(id: number): Promise<void> {
+  await wpFetch(`/categories/${id}?force=true`, { method: "DELETE" })
+}
+
 export async function findOrCreateCategory(name: string): Promise<number> {
   const cats = await listCategories()
   const existing = categorieDeRubrique(cats, name)

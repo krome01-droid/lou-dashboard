@@ -305,12 +305,14 @@ export function trouverCategorie<T extends TermeWP>(cats: T[], nom: string): T |
 
 /**
  * La catégorie du site qui porte une rubrique. À préférer à `trouverCategorie`
- * dès qu'on part d'un nom de RUBRIQUE : le site porte deux catégories dont le
- * nom se normalise pareil — « Comparatifs » (id 7, 14 articles) et le doublon
- * `comparatifs` (id 102, 1 article) fabriqué par le défaut de septembre. Une
- * recherche par le nom seul rend celle que l'API liste en premier, c'est-à-dire
- * le hasard ; les slugs déclarés dans `RUBRIQUES` tranchent, le premier étant
- * la rubrique établie.
+ * dès qu'on part d'un nom de RUBRIQUE : le site a porté deux catégories dont le
+ * nom se normalisait pareil — « Comparatifs » (id 7) et le doublon
+ * `comparatifs` (id 102) fabriqué par le défaut de septembre. Une recherche par
+ * le nom seul rendait celle que l'API liste en premier, c'est-à-dire le hasard ;
+ * les slugs déclarés dans `RUBRIQUES` tranchent, le premier étant la rubrique
+ * établie. Le doublon a été vidé puis supprimé le 28/09/2026 — son slug reste
+ * déclaré en second dans `RUBRIQUES` : il ne coûte rien et rattrape le terme
+ * s'il réapparaît un jour par une création manuelle.
  */
 export function categorieDeRubrique<T extends TermeWP>(cats: T[], nom: string): T | null {
   const cible = normaliserTerme(nom)

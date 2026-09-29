@@ -1,6 +1,7 @@
 import {
   listAllPosts,
   createPost,
+  updatePost,
   uploadMedia,
   findOrCreateCategory,
   type WPPost,
@@ -58,6 +59,18 @@ const CATEGORIE = "villes"
 const LONGUEUR = 1800
 /** Établissements dans le tableau : au-delà, il faut le comparateur, qui trie. */
 const TABLEAU_MAX = 15
+
+/**
+ * La scène de couverture des guides de ville, imposée et non tirée.
+ *
+ * Mesuré le 29/09/2026 dans les générations du studio : les guides de Toulon,
+ * Caen et Mulhouse ont tous tiré `welcome` + décor `interieur`, trois nuits de
+ * suite — le comptoir d'accueil d'une agence. C'est cohérent pour le rédacteur
+ * (l'article parle d'auto-écoles) et faux pour le lecteur : un comparatif des
+ * auto-écoles d'une VILLE se reconnaît à la ville. Le modèle est l'article de
+ * Reims : une voiture d'auto-école dans une rue, la cathédrale derrière.
+ */
+const SCENE_COUVERTURE = "driving"
 
 function echapper(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
@@ -200,6 +213,87 @@ function consigneVisuelle(v: VilleAnnuaire): string {
   ].join(" ")
 }
 
+/**
+ * Demande au studio la couverture d'un guide de ville.
+ *
+ * Un seul endroit pour les trois réglages imposés : la chaîne complète et le
+ * rattrapage (`?visuel=1`) doivent produire la MÊME image, sinon les guides
+ * d'hier et ceux de demain ne se ressemblent plus.
+ */
+async function couvertureDeVille(v: VilleAnnuaire, formats: string[]) {
+  let media = await requestImage({
+    scene: SCENE_COUVERTURE,
+    place: decorPourVille(v.nom),
+    note: consigneVisuelle(v),
+    format: formatArticle(formats),
+    destination: "couverture_article",
+  })
+  if (!media.image_url && media.generation_id && media.status !== "error") {
+    media = await attendreImage(media.generation_id)
+  }
+  return media
+}
+
+/**
+ * Refait la couverture d'un guide DÉJÀ publié, sans toucher à son texte.
+ *
+ * Sert aux guides parus avant le 29/09/2026, qui portent le comptoir d'agence.
+ * Le guide est retrouvé par son slug — `auto-ecoles-{ville}`, éventuellement
+ * suffixé par `slugLibre()` — et non par son titre : le titre a été écrit par
+ * le modèle et varie, le slug est posé par le code.
+ */
+async function rhabillerGuide(
+  v: VilleAnnuaire,
+  posts: WPPost[],
+  formats: string[],
+  dryRun: boolean,
+) {
+  const attendu = `auto-ecoles-${v.slug}`
+  const guide =
+    posts.find((p) => p.slug === attendu) ??
+    posts.find((p) => p.slug.startsWith(`${attendu}-`))
+  if (!guide) {
+    return { status: "error", motif: "guide_introuvable", ville: v.nom, slug_attendu: attendu }
+  }
+
+  const media = await couvertureDeVille(v, formats)
+  if (!media.image_url) {
+    return {
+      status: "error",
+      motif: "studio_sans_image",
+      ville: v.nom,
+      wp_id: guide.id,
+      error: media.error ?? media.reason ?? `studio : ${media.status ?? "sans réponse"}`,
+    }
+  }
+
+  // En essai, on rend l'URL du studio : elle se regarde avant d'écrire quoi que
+  // ce soit dans la médiathèque. C'est tout l'intérêt d'un rattrapage — juger
+  // l'image AVANT de remplacer celle qui est en ligne.
+  if (dryRun) {
+    return { status: "ok", dry_run: true, ville: v.nom, wp_id: guide.id, slug: guide.slug, image_url: media.image_url, remplacee: false }
+  }
+
+  const extension = media.image_url.toLowerCase().includes(".png") ? "png" : "jpg"
+  const mediaId = await uploadMedia(media.image_url, `${guide.slug}.${extension}`)
+  if (!mediaId) {
+    return { status: "error", motif: "televersement_refuse", ville: v.nom, wp_id: guide.id, image_url: media.image_url }
+  }
+  await updatePost(guide.id, { featured_media: mediaId })
+  return {
+    status: "ok",
+    dry_run: false,
+    ville: v.nom,
+    wp_id: guide.id,
+    slug: guide.slug,
+    url: guide.link,
+    image_url: media.image_url,
+    media_id: mediaId,
+    ancienne_media_id: guide.featured_media || null,
+    remplacee: true,
+  }
+}
+
 /** Le tableau des établissements : des données, pas de la prose — donc du code. */
 function tableau(d: DossierVille): string {
   const v = d.ville
@@ -281,6 +375,11 @@ export async function GET(req: Request) {
   // rédacteur lira.
   const seulementListe = params.get("liste") === "1"
   const seulementBrief = params.get("brief") === "1"
+  // `?visuel=1` : refaire la SEULE couverture d'un guide déjà publié, sans
+  // réécrire une ligne. Les guides parus avant le 29/09/2026 portent le
+  // comptoir d'agence ; les reprendre entièrement coûterait six minutes de
+  // modèle et changerait un texte que personne n'a demandé de changer.
+  const seulementVisuel = params.get("visuel") === "1"
 
   try {
     // La liste WordPress est ce qui dit quelles villes ont DÉJÀ leur guide.
@@ -343,8 +442,13 @@ export async function GET(req: Request) {
     if (!isCromeConfigured()) {
       return Response.json({ status: "error", error: "CROME_INGEST_URL / CROME_INGEST_SECRET absents" }, { status: 500 })
     }
-    const titres = posts.map((p) => texteNu(p.title.rendered)).slice(0, 200)
     const { scenes, formats } = await fetchCatalogue()
+
+    if (seulementVisuel) {
+      return Response.json(await rhabillerGuide(ville, posts, formats, dryRun))
+    }
+
+    const titres = posts.map((p) => texteNu(p.title.rendered)).slice(0, 200)
 
     const rendu = await requestArticle({
       sujet: `Auto-école ${ville.nom} (${ville.dept}) : comparatif des ${dossier.nb} établissements recensés en 2026`,
@@ -417,16 +521,7 @@ export async function GET(req: Request) {
     let mediaId: number | undefined
     let imageErreur: string | undefined
     const decorVille = decorPourVille(ville.nom)
-    let media = await requestImage({
-      scene: "driving",
-      place: decorVille,
-      note: consigneVisuelle(ville),
-      format: formatArticle(formats),
-      destination: "couverture_article",
-    })
-    if (!media.image_url && media.generation_id && media.status !== "error") {
-      media = await attendreImage(media.generation_id)
-    }
+    const media = await couvertureDeVille(ville, formats)
     if (media.image_url) {
       imageUrl = media.image_url
       const extension = media.image_url.toLowerCase().includes(".png") ? "png" : "jpg"

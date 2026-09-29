@@ -197,9 +197,12 @@ export function formatPost(formats: string[]): string {
  * Demande un visuel de marque. Une image manquante ne doit jamais empêcher un
  * post de partir : l'appelant traite le résultat comme un bonus.
  *
- * On ne transmet aucune consigne libre tirée de l'article : le prompt de marque
- * proscrit déjà le texte lisible dans l'image, et y réinjecter un titre
- * ferait réapparaître les lettrages inventés que cette contrainte élimine.
+ * On ne recopie AUCUN texte de l'article dans la demande — ni le titre, ni un
+ * intertitre : le prompt de marque proscrit le texte lisible dans l'image, et y
+ * réinjecter une phrase de l'article fait réapparaître les lettrages inventés
+ * que cette contrainte élimine. `note` n'est pas une entorse à cette règle :
+ * c'est une consigne de DÉCOR écrite par le code (le nom d'une ville), pas une
+ * phrase reprise du rédacteur.
  *
  * Les quatre axes du visuel sont facultatifs, et c'est voulu : celui qu'on ne
  * fixe pas, le studio le tire au sort. Ne rien fixer du tout donnait autrefois
@@ -217,6 +220,13 @@ export interface DemandeVisuel {
   place?: string
   /** Cadrage selon l'emplacement d'arrivée : couverture d'article, post de fil… */
   destination?: string
+  /**
+   * Consigne libre, placée EN TÊTE du prompt du studio, au-dessus de la scène
+   * et du décor — c'est l'extrémité que les modèles d'image pèsent le plus.
+   * Sert à ce que le catalogue ne peut pas dire : un lieu réel, par exemple.
+   * 1 500 caractères au maximum côté studio.
+   */
+  note?: string
 }
 
 export async function requestImage(demande: DemandeVisuel = {}): Promise<MediaResult> {
@@ -236,6 +246,7 @@ export async function requestImage(demande: DemandeVisuel = {}): Promise<MediaRe
         style: demande.style,
         place: demande.place,
         destination: demande.destination,
+        note: demande.note,
         wait: true,
       }),
       signal: AbortSignal.timeout(90_000),

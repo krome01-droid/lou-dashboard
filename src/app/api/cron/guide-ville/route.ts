@@ -163,6 +163,43 @@ function consigne(d: DossierVille): string {
   return lignes.join("\n")
 }
 
+/**
+ * Le décor du catalogue le plus proche de la ville. Le studio n'en connaît que
+ * des génériques (`paris`, `province`, `banlieue`, `rocade`, `campagne`) : on
+ * prend le moins faux, et c'est la consigne ci-dessous qui nomme la vraie ville.
+ * Sans ce choix, le tirage au sort pouvait envoyer un comparatif urbain sur une
+ * route de campagne.
+ */
+function decorPourVille(nom: string): string {
+  return normaliser(nom) === "paris" ? "paris" : "province"
+}
+
+/**
+ * La consigne de couverture, placée en tête du prompt du studio.
+ *
+ * Écrite en anglais parce que le reste du prompt l'est : une consigne
+ * prioritaire dans une autre langue que les blocs qu'elle doit contredire perd
+ * une partie de son poids. Elle dit trois choses, dans cet ordre : la ville est
+ * réelle et doit être reconnaissable, cette instruction prime sur le décor
+ * générique qui suit, et la voiture d'auto-école reste le sujet.
+ *
+ * La dernière ligne n'est pas un doublon des règles de marque : nommer une
+ * ville pousse les modèles à l'ÉCRIRE dans l'image — panneau d'entrée
+ * d'agglomération, enseigne, plaque de rue. Le rappel est là pour ça.
+ */
+function consigneVisuelle(v: VilleAnnuaire): string {
+  return [
+    `Real location: the French city of ${v.nom} (department ${v.dept}).`,
+    `The background MUST make ${v.nom} recognisable at a glance:`,
+    "its best-known landmark, monument or distinctive local architecture,",
+    "seen from a real street of that city.",
+    "This location instruction overrides the generic town description given below.",
+    "Foreground subject unchanged: a dual-control learner car in the street.",
+    `NO readable text of any kind — in particular never write "${v.nom}"`,
+    "or any place name on a sign, a plate or a shopfront.",
+  ].join(" ")
+}
+
 /** Le tableau des établissements : des données, pas de la prose — donc du code. */
 function tableau(d: DossierVille): string {
   const v = d.ville
@@ -359,12 +396,34 @@ export async function GET(req: Request) {
       })
     }
 
-    // La couverture, non bloquante — même reprise qu'en `redaction-seo`.
+    // La couverture, non bloquante — même reprise qu'en `redaction-seo`, à une
+    // différence près : ici la scène n'est PAS celle que le rédacteur propose.
+    //
+    // Mesuré le 29/09/2026 dans les générations du studio : les guides de
+    // Toulon, Caen et Mulhouse ont tous tiré `welcome` + décor `interieur`,
+    // trois nuits de suite — le comptoir d'accueil d'une agence. C'est logique
+    // du point de vue du rédacteur (l'article parle d'auto-écoles) et faux du
+    // point de vue du lecteur : un comparatif des auto-écoles d'une VILLE se
+    // reconnaît à la ville, pas à un guichet interchangeable. Le modèle reste
+    // l'article de Reims — une voiture d'auto-école dans une rue de Reims, la
+    // cathédrale derrière.
+    //
+    // D'où trois réglages imposés plutôt que tirés : la scène `driving` (une
+    // voiture d'auto-école en circulation), le décor urbain, et surtout une
+    // consigne en tête de prompt qui nomme la ville réelle. Le catalogue du
+    // studio ne connaît que des décors génériques — « ville de province »,
+    // « Paris » — donc sans cette consigne aucune image ne peut être « Caen ».
     let imageUrl: string | null = null
     let mediaId: number | undefined
     let imageErreur: string | undefined
-    const scene = scenes.some((s) => s.key === article.scene_visuel) ? article.scene_visuel : undefined
-    let media = await requestImage({ scene, format: formatArticle(formats), destination: "couverture_article" })
+    const decorVille = decorPourVille(ville.nom)
+    let media = await requestImage({
+      scene: "driving",
+      place: decorVille,
+      note: consigneVisuelle(ville),
+      format: formatArticle(formats),
+      destination: "couverture_article",
+    })
     if (!media.image_url && media.generation_id && media.status !== "error") {
       media = await attendreImage(media.generation_id)
     }
@@ -397,7 +456,12 @@ export async function GET(req: Request) {
       wp_id: depose.id, url: depose.link, titre: article.titre,
       statut_conseille: verdict.statut_conseille, motif: verdict.motif,
       bloquants: verdict.bloquants, mineurs: verdict.mineurs,
-      scene: article.scene_visuel || null,
+      // Ce que le rédacteur PROPOSAIT comme scène, et ce qui a réellement été
+      // demandé au studio. Les deux, parce qu'ils divergent volontairement
+      // depuis le 29/09 : garder la trace de la proposition dit quand le
+      // catalogue de scènes cesserait d'être le bon endroit pour trancher.
+      scene_proposee: article.scene_visuel || null,
+      couverture: { scene: "driving", place: decorVille, ville: ville.nom },
       maillage: rapportMaillage,
       jsonld_conserve: (depose.content?.rendered ?? "").includes("application/ld+json"),
       image_url: imageUrl,

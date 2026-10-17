@@ -18,6 +18,7 @@ import {
 } from "@/lib/crome/client"
 import { classerArticle } from "@/lib/wordpress/rubriques"
 import { getTopKeywords } from "@/lib/google/search-console"
+import { couvertPar, type ArticleConnu } from "@/lib/seo/couverture"
 import { query, execute } from "@/lib/db/connection"
 
 // Rédaction d'un article SEO/GEO, puis dépôt sur autoecolemagazine.fr.
@@ -255,6 +256,15 @@ function assembler(a: ArticleRedige, jsonld: unknown[]): string {
   return morceaux.join("\n\n")
 }
 
+/** Une requête écartée parce qu'un article la couvre déjà. */
+interface Ecarte {
+  mot_cle: string
+  position: number
+  impressions: number
+  slug: string
+  par: string
+}
+
 /**
  * Choisit le mot-clé à viser à partir de la Search Console.
  *
@@ -263,38 +273,54 @@ function assembler(a: ArticleRedige, jsonld: unknown[]): string {
  * fonctionne.
  */
 async function choisirMotCle(
-  titres: string[],
-): Promise<{ motCle: string | null; diagnostic: string }> {
+  articles: ArticleConnu[],
+): Promise<{ motCle: string | null; diagnostic: string; ecartes: Ecarte[] }> {
   let mots: Awaited<ReturnType<typeof getTopKeywords>>
   try {
     mots = await getTopKeywords(200)
   } catch (e) {
     const raison = e instanceof Error ? e.message.slice(0, 200) : "injoignable"
     console.warn("[cron/redaction-seo] Search Console indisponible:", raison)
-    return { motCle: null, diagnostic: `Search Console injoignable : ${raison}` }
+    return { motCle: null, diagnostic: `Search Console injoignable : ${raison}`, ecartes: [] }
   }
 
-  const normalises = titres.map((t) => t.toLowerCase())
-  const retenus = mots.filter(
-    (m) =>
-      m.position >= POSITION_MIN &&
-      m.position <= POSITION_MAX &&
-      m.impressions >= IMPRESSIONS_MIN &&
-      // Une requête de marque ne se travaille pas par un article.
-      !/auto[- ]?école magazine|autoecolemagazine/i.test(m.keyword) &&
-      !normalises.some((t) => t.includes(m.keyword.toLowerCase())),
-  )
-  const candidat = [...retenus].sort((a, b) => b.impressions - a.impressions)[0]
+  const eligibles = mots
+    .filter(
+      (m) =>
+        m.position >= POSITION_MIN &&
+        m.position <= POSITION_MAX &&
+        m.impressions >= IMPRESSIONS_MIN &&
+        // Une requête de marque ne se travaille pas par un article.
+        !/auto[- ]?école magazine|autoecolemagazine/i.test(m.keyword),
+    )
+    // Le plus d'impressions d'abord : c'est la demande réelle, pas la position.
+    .sort((a, b) => b.impressions - a.impressions)
+
+  // Une requête déjà couverte par un article est écartée, quelle que soit sa
+  // position : c'est le cas où la Search Console insiste le plus. L'article
+  // existant la fait apparaître hors du podium, elle reste dans la zone « à
+  // travailler », et chaque passage en écrivait un de plus.
+  const libres: typeof eligibles = []
+  const ecartes: Ecarte[] = []
+  for (const r of eligibles) {
+    const c = couvertPar(r.keyword, articles)
+    if (!c) libres.push(r)
+    else ecartes.push({ mot_cle: r.keyword, position: r.position, impressions: r.impressions, slug: c.slug, par: c.par })
+  }
+  const candidat = libres[0]
+  const bilan = `${eligibles.length} requêtes éligibles sur ${mots.length}, dont ${ecartes.length} déjà couvertes`
 
   if (!candidat) {
     return {
       motCle: null,
-      diagnostic: `${mots.length} requêtes remontées, aucune entre la ${POSITION_MIN}e et la ${POSITION_MAX}e place avec ${IMPRESSIONS_MIN}+ impressions et non déjà traitée.`,
+      diagnostic: `${bilan} : aucune requête libre entre la ${POSITION_MIN}e et la ${POSITION_MAX}e place avec ${IMPRESSIONS_MIN}+ impressions.`,
+      ecartes,
     }
   }
   return {
     motCle: candidat.keyword,
-    diagnostic: `${retenus.length} requêtes éligibles sur ${mots.length} ; retenue : position ${candidat.position}, ${candidat.impressions} impressions.`,
+    diagnostic: `${bilan} ; retenue : position ${candidat.position}, ${candidat.impressions} impressions.`,
+    ecartes,
   }
 }
 
@@ -309,6 +335,9 @@ export async function GET(req: Request) {
   const dryRun = params.get("dry_run") === "1"
   const sujetImpose = params.get("sujet") ?? undefined
   const motCleImpose = params.get("mot_cle") ?? undefined
+  // `?doublon=1` : écrit un nouvel article sur un mot-clé imposé que le site
+  // couvre déjà. Sans lui, la demande est refusée avant de payer la rédaction.
+  const accepterDoublon = params.get("doublon") === "1"
   const forcerRelecture = params.get("relire") === "1"
   // `?source=veille` : partir de la meilleure idée de veille non traitée plutôt
   // que de la Search Console. C'est l'autre voie éditoriale — l'actualité —
@@ -335,6 +364,29 @@ export async function GET(req: Request) {
     // que cette liste sert à éviter.
     const existants = await listAllPosts("publish,draft").catch(() => [] as WPPost[])
     const titres = existants.map((p) => texteNu(p.title.rendered)).slice(0, 200)
+    // Les publiés d'abord : à couverture égale, l'article désigné comme « déjà
+    // là » doit être un article en ligne, pas un brouillon.
+    const connus: ArticleConnu[] = [...existants]
+      .sort((x, y) => Number(y.status === "publish") - Number(x.status === "publish"))
+      .map((p) => ({ titre: texteNu(p.title.rendered), slug: p.slug }))
+
+    // Un mot-clé imposé passe la même garde que celui de la Search Console :
+    // les rattrapages du 15/10/2026 ont republié des sujets déjà en ligne.
+    if (motCleImpose && !accepterDoublon) {
+      const deja = couvertPar(motCleImpose, connus)
+      if (deja) {
+        return Response.json(
+          {
+            status: "error",
+            step: "cannibalisation",
+            error: `« ${motCleImpose} » est déjà couvert par « ${deja.titre} » (${deja.slug}, reconnu par ${deja.par}).`,
+            existant: deja.slug,
+            conseil: "Mettre à jour l'article existant plutôt que d'en écrire un second — ou forcer un nouvel article avec ?doublon=1.",
+          },
+          { status: 409 },
+        )
+      }
+    }
 
     // L'angle vient, par ordre de priorité : du paramètre, de la veille, puis
     // de la Search Console.
@@ -352,9 +404,13 @@ export async function GET(req: Request) {
             diagnostic: idee
               ? `idée de veille #${idee.id} (priorité ${idee.priorite})`
               : "angle imposé par l'appelant",
+            ecartes: [] as Ecarte[],
           }
-        : await choisirMotCle(titres)
+        : await choisirMotCle(connus)
     const motCle = motCleImpose ?? choix.motCle ?? undefined
+    // La requête la plus vue parmi celles qu'un article couvre déjà : c'est
+    // l'article à mettre à jour si l'on veut gagner des places dessus.
+    const miseAJourSuggeree = choix.ecartes[0] ?? null
 
     // Le catalogue du studio se lit AVANT la rédaction, et son résultat sert
     // deux fois : le rédacteur choisit la scène qui montre ce dont il parle, et
@@ -462,6 +518,8 @@ export async function GET(req: Request) {
         mot_cle: article.mot_cle_principal,
         mot_cle_source: motCleImpose ? "paramètre" : motCle ? "search-console" : "moteur",
         mot_cle_diagnostic: choix.diagnostic,
+        mots_cles_ecartes: choix.ecartes.slice(0, 10),
+        mise_a_jour_suggeree: miseAJourSuggeree,
         angle_source: idee ? "veille" : sujetImpose ? "paramètre" : motCle ? "search-console" : "moteur",
         veille_id: idee?.id ?? null,
         statut_conseille: verdict.statut_conseille,
@@ -539,6 +597,8 @@ export async function GET(req: Request) {
       mot_cle: article.mot_cle_principal,
       mot_cle_source: motCleImpose ? "paramètre" : motCle ? "search-console" : "moteur",
       mot_cle_diagnostic: choix.diagnostic,
+      mots_cles_ecartes: choix.ecartes.slice(0, 10),
+      mise_a_jour_suggeree: miseAJourSuggeree,
       angle_source: idee ? "veille" : sujetImpose ? "paramètre" : motCle ? "search-console" : "moteur",
       veille_id: idee?.id ?? null,
       statut_conseille: verdict.statut_conseille,

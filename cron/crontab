@@ -46,6 +46,10 @@
 #    brouillon avec alerte Telegram. C'est voulu, pas une panne.
 #  - seules les idées de moins de 7 jours sont retenues : une actualité plus
 #    ancienne ne se publie pas comme neuve.
+#  - depuis le 13/11/2026, une idée que le site traite déjà fait RÉÉCRIRE
+#    l'article existant (même URL) au lieu d'en publier un second ; s'il date
+#    de moins de 30 jours, l'idée est écartée. 18 articles ZFE en deux mois
+#    étaient sortis par ici.
 #  - 8h30 et non 8h : la newsletter du lundi part à 8h, et deux rédactions
 #    longues en parallèle sur le même conteneur ne s'imposent pas.
 30 8 * * * /usr/local/bin/call-cron.sh "redaction-seo?source=veille"

@@ -186,6 +186,25 @@ export async function listerVilles(min = MIN_AUTO_ECOLES): Promise<VilleAnnuaire
     .sort((a, b) => b.nb - a.nb || a.nom.localeCompare(b.nom, "fr"))
 }
 
+/**
+ * Le titre et la ville de chaque fiche publiée : de quoi reconnaître une
+ * requête Search Console qui cherche UN établissement (`lib/seo/navigation`).
+ * ~20 000 lignes, une seule requête ; lu une fois par passage de
+ * `redaction-seo`.
+ */
+export async function listerFichesPourNavigation(): Promise<{ titre: string; ville: string | null }[]> {
+  const lignes = await query<{ titre: string | null; ville: string | null }>(`
+    SELECT p.post_title titre, MAX(v.meta_value) ville
+    FROM wp_posts p
+    LEFT JOIN wp_postmeta v ON v.post_id = p.ID AND v.meta_key = 'ville'
+    WHERE p.post_type = 'auto-ecole' AND p.post_status = 'publish'
+    GROUP BY p.ID, p.post_title
+  `)
+  return lignes
+    .map((l) => ({ titre: String(l.titre ?? "").trim(), ville: l.ville ? String(l.ville).trim() : null }))
+    .filter((l) => l.titre)
+}
+
 function nombre(v: unknown): number | null {
   if (v == null || v === "") return null
   const n = Number(String(v).replace(",", "."))

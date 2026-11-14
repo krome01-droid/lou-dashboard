@@ -30,6 +30,8 @@ import {
 } from "@/lib/seo/doublons"
 import { jugerCouverture, type ArticleDuCatalogue } from "@/lib/seo/jugement"
 import { inscrire, lireRegistre, type EntreeRegistre } from "@/lib/seo/registre"
+import { construireRepertoire, requeteDeNavigation, type Repertoire } from "@/lib/seo/navigation"
+import { listerFichesPourNavigation } from "@/lib/villes/annuaire"
 import { query, execute } from "@/lib/db/connection"
 
 // Rédaction d'un article SEO/GEO, puis dépôt sur autoecolemagazine.fr.
@@ -394,6 +396,18 @@ interface Ecarte {
   par: string
 }
 
+/** Une requête écartée parce qu'elle cherche un établissement précis. */
+interface RequeteNavigation {
+  mot_cle: string
+  position: number
+  impressions: number
+  /** Le nom reconnu (« sebastopol », « plus que permis ») ou la forme (« … photos »). */
+  nom: string
+  par: "annuaire" | "forme"
+  /** La fiche de l'annuaire qui porte ce nom : c'est elle qui répond à la requête. */
+  fiche: string | null
+}
+
 /**
  * Choisit le mot-clé à viser à partir de la Search Console.
  *
@@ -403,14 +417,35 @@ interface Ecarte {
  */
 async function choisirMotCle(
   articles: ArticleConnu[],
-): Promise<{ motCle: string | null; diagnostic: string; ecartes: Ecarte[] }> {
+): Promise<{ motCle: string | null; diagnostic: string; ecartes: Ecarte[]; navigation: RequeteNavigation[] }> {
   let mots: Awaited<ReturnType<typeof getTopKeywords>>
   try {
     mots = await getTopKeywords(200)
   } catch (e) {
     const raison = e instanceof Error ? e.message.slice(0, 200) : "injoignable"
     console.warn("[cron/redaction-seo] Search Console indisponible:", raison)
-    return { motCle: null, diagnostic: `Search Console injoignable : ${raison}`, ecartes: [] }
+    return { motCle: null, diagnostic: `Search Console injoignable : ${raison}`, ecartes: [], navigation: [] }
+  }
+
+  // L'annuaire, pour reconnaître les requêtes qui cherchent UNE auto-école :
+  // plus de six requêtes éligibles sur dix au 14/11/2026. Illisible, il ne
+  // laisse pas passer la liste brute — elle donnerait presque à coup sûr un
+  // article « comment vérifier l'auto-école X » qui ne répond à personne : le
+  // moteur choisit alors son sujet, et le diagnostic le dit.
+  let repertoire: Repertoire
+  try {
+    const fiches = await listerFichesPourNavigation()
+    if (fiches.length === 0) throw new Error("zéro fiche auto-école lue")
+    repertoire = construireRepertoire(fiches)
+  } catch (e) {
+    const raison = e instanceof Error ? e.message.slice(0, 200) : "illisible"
+    console.error("[cron/redaction-seo] annuaire illisible, requêtes de navigation non filtrables :", raison)
+    return {
+      motCle: null,
+      diagnostic: `annuaire illisible (${raison}) : impossible d'écarter les requêtes qui cherchent un établissement, aucune requête retenue.`,
+      ecartes: [],
+      navigation: [],
+    }
   }
 
   const eligibles = mots
@@ -429,27 +464,41 @@ async function choisirMotCle(
   // position : c'est le cas où la Search Console insiste le plus. L'article
   // existant la fait apparaître hors du podium, elle reste dans la zone « à
   // travailler », et chaque passage en écrivait un de plus.
+  //
+  // Une requête de navigation est écartée AVANT la couverture : elle n'a
+  // aucun article à mettre à jour, et l'article qui la « couvre » est
+  // justement celui qui n'aurait pas dû être écrit (`auto-ecole-sebastopol-…`).
   const libres: typeof eligibles = []
   const ecartes: Ecarte[] = []
+  const navigation: RequeteNavigation[] = []
   for (const r of eligibles) {
+    const n = requeteDeNavigation(r.keyword, repertoire)
+    if (n) {
+      navigation.push({ mot_cle: r.keyword, position: r.position, impressions: r.impressions, nom: n.nom, par: n.par, fiche: n.fiche })
+      continue
+    }
     const c = couvertPar(r.keyword, articles)
     if (!c) libres.push(r)
     else ecartes.push({ mot_cle: r.keyword, position: r.position, impressions: r.impressions, slug: c.slug, par: c.par })
   }
   const candidat = libres[0]
-  const bilan = `${eligibles.length} requêtes éligibles sur ${mots.length}, dont ${ecartes.length} déjà couvertes`
+  const bilan =
+    `${eligibles.length} requêtes éligibles sur ${mots.length}, dont ${navigation.length} de navigation ` +
+    `(annuaire de ${repertoire.fiches} fiches) et ${ecartes.length} déjà couvertes`
 
   if (!candidat) {
     return {
       motCle: null,
       diagnostic: `${bilan} : aucune requête libre entre la ${POSITION_MIN}e et la ${POSITION_MAX}e place avec ${IMPRESSIONS_MIN}+ impressions.`,
       ecartes,
+      navigation,
     }
   }
   return {
     motCle: candidat.keyword,
     diagnostic: `${bilan} ; retenue : position ${candidat.position}, ${candidat.impressions} impressions.`,
     ecartes,
+    navigation,
   }
 }
 
@@ -670,6 +719,7 @@ export async function GET(req: Request) {
                 ? `réécriture de ${cible.slug}`
                 : "angle imposé par l'appelant",
             ecartes: [] as Ecarte[],
+            navigation: [] as RequeteNavigation[],
           }
         : await choisirMotCle(connus)
     // Une réécriture garde le mot-clé que l'article visait, quand on le connaît.
@@ -728,6 +778,9 @@ export async function GET(req: Request) {
       mot_cle_source: motCleSource,
       mot_cle_diagnostic: choix.diagnostic,
       mots_cles_ecartes: choix.ecartes.slice(0, 10),
+      // Les requêtes qui cherchent UN établissement : la fiche de l'annuaire y
+      // répond, un article ne le peut pas.
+      requetes_navigation: choix.navigation.slice(0, 10),
       mise_a_jour_suggeree: miseAJourSuggeree,
       angle_source: angleSource,
       veille_id: idee?.id ?? null,

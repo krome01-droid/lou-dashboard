@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk"
-import { listAllPosts, listAllPages, type WPPost } from "@/lib/wordpress/client"
+import { listAllWithTotal, type WPPost } from "@/lib/wordpress/client"
 import { getSummary, getTopKeywords, getTopPages } from "@/lib/google/search-console"
 import { execute, query } from "@/lib/db/connection"
 
@@ -11,7 +11,42 @@ const CAP_PAGES = 15
 const CAP_PAIRS = 15
 const CAP_FAMILIES = 25
 const CAP_HISTORY = 10
+// Lignes lues pour en garder CAP_HISTORY : les briefs sans inventaire sont écartés.
+const HISTORY_SCAN = 40
 const PAIR_SCAN_LIMIT = 500
+
+/**
+ * Une lecture qui a échoué reste un échec : elle ne devient pas une liste vide.
+ *
+ * L'ancien `.catch(() => [])` sur la lecture des articles produisait, le jour où
+ * WordPress répondait mal, « Articles publiés : 0 » dans un bloc présenté au
+ * modèle comme exact — d'où des briefs « site en état critique : zéro article
+ * publié » sur un site qui en compte plus de quatre cents.
+ */
+type Lecture<T> = { ok: true; value: T } | { ok: false; error: string }
+
+function lire<T>(p: Promise<T>): Promise<Lecture<T>> {
+  return p.then(
+    (value) => ({ ok: true as const, value }),
+    (err: unknown) => ({
+      ok: false as const,
+      error: (err instanceof Error ? err.message : String(err)).slice(0, 300),
+    }),
+  )
+}
+
+/** Motif d'échec d'une lecture d'inventaire, ou null si elle est complète. */
+function echecInventaire(
+  label: string,
+  lecture: Lecture<{ items: WPPost[]; announced: number | null }>,
+): string | null {
+  if (!lecture.ok) return `${label} : lecture impossible (${lecture.error})`
+  const { items, announced } = lecture.value
+  if (announced !== null && items.length < announced) {
+    return `${label} : lecture partielle, ${items.length} reçus sur ${announced} annoncés par WordPress`
+  }
+  return null
+}
 
 interface LinkStats {
   slug: string
@@ -149,16 +184,19 @@ export async function GET(req: Request) {
     // Full inventory + real search performance + brief history, in parallel.
     // Search Console is optional: if Google auth isn't wired up the brief still
     // runs, but the prompt then forbids any traffic/volume claim.
-    const [posts, pages, recentBriefs, seoReports, scSummary, scKeywords, scPages] =
+    // The inventory is NOT optional: without it there is no brief (see below).
+    const [postsRead, pagesRead, historyRead, seoReports, scSummary, scKeywords, scPages] =
       await Promise.all([
-        listAllPosts().catch(() => [] as WPPost[]),
-        listAllPages().catch(() => [] as WPPost[]),
-        query<{ content_markdown: string; meta_json: string; created_at: string }>(
-          `SELECT content_markdown, meta_json, created_at
-           FROM wp_lou_content_log
-           WHERE type = 'brief' AND created_by = 'lou-cron'
-           ORDER BY created_at DESC LIMIT ${CAP_HISTORY}`,
-        ).catch(() => []),
+        lire(listAllWithTotal("posts")),
+        lire(listAllWithTotal("pages")),
+        lire(
+          query<{ content_markdown: string; meta_json: string; created_at: string }>(
+            `SELECT content_markdown, meta_json, created_at
+             FROM wp_lou_content_log
+             WHERE type = 'brief' AND created_by = 'lou-cron' AND status = 'published'
+             ORDER BY created_at DESC LIMIT ${HISTORY_SCAN}`,
+          ),
+        ),
         query<{ data_json: string; created_at: string }>(
           `SELECT data_json, created_at FROM wp_lou_seo_reports ORDER BY created_at DESC LIMIT 1`,
         ).catch(() => []),
@@ -166,6 +204,69 @@ export async function GET(req: Request) {
         getTopKeywords(CAP_KEYWORDS).catch(() => null),
         getTopPages(CAP_PAGES).catch(() => null),
       ])
+
+    // --- Inventory must be complete --------------------------------------
+    // Every figure of the brief derives from the inventory. A failed or partial
+    // read is reported as a failure — never handed to the model as an empty site.
+    const failedReads = [
+      echecInventaire("articles", postsRead),
+      echecInventaire("pages", pagesRead),
+    ].filter((e): e is string => e !== null)
+
+    if (!postsRead.ok || !pagesRead.ok || failedReads.length > 0) {
+      const error = `Brief non produit : la lecture du site WordPress a échoué. ${failedReads.join(" ; ")}`
+      let logged = false
+      if (!dryRun) {
+        // Visible in the Rapports tab, so a missing brief is not mistaken for a
+        // quiet morning. status 'error' keeps it out of the next brief's history.
+        try {
+          await execute(
+            `INSERT INTO wp_lou_content_log (title, type, status, content_markdown, meta_json, created_by)
+             VALUES (?, 'brief', 'error', ?, ?, 'lou-cron')`,
+            [
+              `Brief matinal — ${today} — non produit (lecture WordPress en échec)`,
+              `## ${today}
+
+**Brief non produit.** La lecture du site WordPress a échoué ce matin. Aucun chiffre n'est donné : un échec de lecture n'est pas un site vide.
+
+${failedReads.map((e) => `- ${e}`).join("\n")}
+
+Le prochain passage réessaiera. Si l'échec se répète, vérifier l'API REST de WordPress (mot de passe d'application, pare-feu, réponse JSON).`,
+              JSON.stringify({ source: "cron_daily_brief", error, failed_reads: failedReads }),
+            ],
+          )
+          logged = true
+        } catch {
+          // The HTTP response below still carries the failure.
+        }
+      }
+      return Response.json(
+        { status: "error", dry_run: dryRun, date: today, error, failed_reads: failedReads, logged },
+        { status: 502 },
+      )
+    }
+
+    const posts = postsRead.value.items
+    const pages = pagesRead.value.items
+
+    // Only briefs carrying an inventory snapshot count as history. The others
+    // were not built on a verified scan (failed runs, or the pre-May version of
+    // this route still scheduled on the old Vercel deployment, whose briefs
+    // claim an empty site) and must neither feed the "already proposed" list
+    // nor serve as the baseline for the delta.
+    const historyAvailable = historyRead.ok
+    const recentBriefs = (historyRead.ok ? historyRead.value : [])
+      .map((b) => {
+        let meta: BriefMeta | null = null
+        try {
+          meta = JSON.parse(b.meta_json) as BriefMeta
+        } catch {
+          meta = null
+        }
+        return { ...b, meta }
+      })
+      .filter((b) => b.meta?.inventory)
+      .slice(0, CAP_HISTORY)
 
     const hasSearchData = scSummary !== null && scKeywords !== null
 
@@ -230,29 +331,21 @@ export async function GET(req: Request) {
     const previousGoals: string[] = []
     let lastInventory: Record<string, number> | null = null
 
-    recentBriefs.forEach((b, idx) => {
-      const when = new Date(b.created_at).toLocaleDateString("fr-FR", {
+    recentBriefs.forEach(({ created_at, meta }, idx) => {
+      const when = new Date(created_at).toLocaleDateString("fr-FR", {
         day: "numeric",
         month: "short",
       })
-      let meta: BriefMeta | null = null
-      try {
-        meta = JSON.parse(b.meta_json) as BriefMeta
-      } catch {
-        meta = null
-      }
 
       if (idx === 0 && meta?.inventory) lastInventory = meta.inventory
 
-      if (meta?.actions?.length) {
-        for (const a of meta.actions) {
-          const targets = a.target_slugs?.length ? ` [cibles : ${a.target_slugs.join(", ")}]` : ""
-          history.push(`- ${when} — ACTION : ${a.title}${targets}`)
-        }
-      } else {
-        // Older briefs stored only markdown — recover the bolded action titles.
-        const matches = b.content_markdown?.match(/\*\*([^*]+)\*\*/g) ?? []
-        for (const m of matches) history.push(`- ${when} — ACTION : ${m.replace(/\*\*/g, "").trim()}`)
+      // Every brief kept here has an inventory, hence structured actions: the
+      // old markdown fallback is gone. It scraped every bold span, so section
+      // labels ("État du site :") and the stale "zéro article" actions landed
+      // in the "already proposed" list.
+      for (const a of meta?.actions ?? []) {
+        const targets = a.target_slugs?.length ? ` [cibles : ${a.target_slugs.join(", ")}]` : ""
+        history.push(`- ${when} — ACTION : ${a.title}${targets}`)
       }
 
       if (meta?.article_idea?.title) {
@@ -336,7 +429,7 @@ Tu produis un brief quotidien pour Laurent. Ce brief est le ${recentBriefs.lengt
 ═══════════════════════════════════════
 BLOC 1 — INVENTAIRE VÉRIFIÉ
 ═══════════════════════════════════════
-Ces chiffres sont calculés par scan complet du site (tous les articles et toutes les pages, contenu HTML parsé). Ils sont exacts.
+Ces chiffres sont calculés par scan complet du site (tous les articles et toutes les pages, contenu HTML parsé), vérifié contre le total annoncé par WordPress. Ils sont exacts.
 
 - Articles publiés : ${posts.length}
 - Pages publiées : ${pages.length}
@@ -385,15 +478,21 @@ ${searchBlock}
 BLOC 3 — CE QUI A BOUGÉ DEPUIS LE BRIEF PRÉCÉDENT
 ═══════════════════════════════════════
 ${
-  deltaLines.length
-    ? deltaLines.join("\n")
-    : "Aucun instantané précédent disponible — c'est le premier brief mesurable."
+  !historyAvailable
+    ? "⚠️ Historique des briefs illisible sur ce run (erreur de base de données) : aucune comparaison avec le brief précédent n'est possible aujourd'hui. Ce n'est PAS un premier brief — ne le présente pas comme tel."
+    : deltaLines.length
+      ? deltaLines.join("\n")
+      : "Aucun instantané précédent disponible — c'est le premier brief mesurable."
 }
 
 ═══════════════════════════════════════
 BLOC 4 — HISTORIQUE : DÉJÀ PROPOSÉ, INTERDIT DE REPROPOSER
 ═══════════════════════════════════════
-**Actions déjà proposées (${recentBriefs.length} derniers briefs) :**
+${
+  historyAvailable
+    ? ""
+    : "⚠️ Historique illisible sur ce run : les listes ci-dessous sont vides faute de lecture, pas parce que rien n'a été proposé. Ne classe aucune action en `fait`.\n\n"
+}**Actions déjà proposées (${recentBriefs.length} derniers briefs) :**
 ${history.length ? history.join("\n") : "aucune"}
 
 **Idées d'articles déjà proposées :**
@@ -591,6 +690,7 @@ ${brief.actions
             alert: brief.alert,
             weekly_goal: brief.weekly_goal,
             search_console: hasSearchData,
+            history_available: historyAvailable,
             inventory: currentInventory,
           }),
         ],
@@ -608,6 +708,7 @@ ${brief.actions
       alert: brief.alert,
       weekly_goal: brief.weekly_goal,
       search_console: hasSearchData,
+      history_available: historyAvailable,
       inventory: { ...currentInventory, recent: recentStats.length },
     })
   } catch (err) {

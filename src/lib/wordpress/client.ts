@@ -25,7 +25,7 @@ async function wpFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
 
 async function wpFetchWithHeaders<T>(
   path: string,
-): Promise<{ data: T; totalPages: number; totalItems: number }> {
+): Promise<{ data: T; totalPages: number; totalItems: number; announcedTotal: number | null }> {
   const res = await fetch(`${WP_URL()}/wp-json/wp/v2${path}`, {
     headers: { Authorization: `Basic ${WP_AUTH()}` },
   })
@@ -36,10 +36,14 @@ async function wpFetchWithHeaders<T>(
   }
 
   const raw = await res.text()
+  const totalHeader = res.headers.get("X-WP-Total")
   return {
     data: JSON.parse(extractJson(raw)) as T,
     totalPages: Number(res.headers.get("X-WP-TotalPages") ?? 1),
-    totalItems: Number(res.headers.get("X-WP-Total") ?? 0),
+    totalItems: Number(totalHeader ?? 0),
+    // `totalItems` vaut 0 quand l'en-tête manque : impossible alors de distinguer
+    // « aucun contenu » de « total inconnu ». `announcedTotal` garde la différence.
+    announcedTotal: totalHeader === null ? null : Number(totalHeader),
   }
 }
 
@@ -153,11 +157,24 @@ export async function listPosts(params: {
   return wpFetch<WPPost[]>(`/posts?${qs}`)
 }
 
-async function fetchAllPaginated(endpoint: "posts" | "pages", status = "publish"): Promise<WPPost[]> {
+/**
+ * Tout un type de contenu, avec le total que WordPress annonce lui-même
+ * (`X-WP-Total` de la première page ; `null` si l'en-tête manque).
+ *
+ * Le total annoncé est le seul moyen de savoir qu'une lecture est COMPLÈTE :
+ * sans `X-WP-TotalPages`, la boucle s'arrête après la première page et rend
+ * 100 éléments sans rien signaler. Un appelant qui présente le nombre reçu
+ * comme un chiffre exact doit le comparer à `announced`.
+ */
+export async function listAllWithTotal(
+  endpoint: "posts" | "pages",
+  status = "publish",
+): Promise<{ items: WPPost[]; announced: number | null }> {
   const all: WPPost[] = []
   const perPage = 100
   let page = 1
   let totalPages = 1
+  let announced: number | null = null
   do {
     const qs = new URLSearchParams({
       per_page: String(perPage),
@@ -165,12 +182,19 @@ async function fetchAllPaginated(endpoint: "posts" | "pages", status = "publish"
       status,
       _fields: "id,title,content,excerpt,slug,status,link,date,modified,categories,tags",
     })
-    const { data, totalPages: tp } = await wpFetchWithHeaders<WPPost[]>(`/${endpoint}?${qs}`)
+    const { data, totalPages: tp, announcedTotal } = await wpFetchWithHeaders<WPPost[]>(
+      `/${endpoint}?${qs}`,
+    )
+    if (page === 1) announced = announcedTotal
     all.push(...data)
     totalPages = tp
     page++
   } while (page <= totalPages)
-  return all
+  return { items: all, announced }
+}
+
+async function fetchAllPaginated(endpoint: "posts" | "pages", status = "publish"): Promise<WPPost[]> {
+  return (await listAllWithTotal(endpoint, status)).items
 }
 
 export async function listAllPosts(status = "publish"): Promise<WPPost[]> {
